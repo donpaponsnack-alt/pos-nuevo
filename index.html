@@ -179,13 +179,16 @@
     // ==================== VARIABLES ====================
     let impresoraCocina = null;
     let impresoraCaja = null;
+    let imprimiendoCocina = false;
+    let imprimiendoCaja = false;
+    let colaImpresionCocina = [];
+    let colaImpresionCaja = [];
     
     let productos = [], categorias = [], mesas = [], meseros = [], ventas = [], pedidosPendientes = [];
     let meseroActual = null, mesaSeleccionada = null, carrito = [], consumoActual = [];
     let ivaPorcentaje = 16;
     let deferredPrompt;
     
-    // ID único para este dispositivo
     const deviceId = localStorage.getItem('deviceId') || 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     localStorage.setItem('deviceId', deviceId);
     
@@ -239,95 +242,185 @@
         return str.replace(/[&<>]/g, m=> m==='&'?'&amp;': m==='<'?'&lt;':'&gt;'); 
     }
     
-    // ==================== SINCRONIZACIÓN EN TIEMPO REAL ====================
+    // ==================== IMPRESIÓN RÁPIDA CON COLA ====================
     
-    // INICIAR escucha de cambios en Firebase
+    async function conectarCocina() {
+        try {
+            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
+            mostrarToast("🔍 Buscando impresora para COCINA...");
+            
+            const device = await Promise.race([
+                navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout 10s")), 10000))
+            ]);
+            
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            impresoraCocina = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+            
+            if (impresoraCocina) {
+                document.getElementById("statusCocina").innerHTML = "🟢 Conectada";
+                document.getElementById("statusCocina").className = "cocina-on";
+                mostrarToast(`✅ Impresora COCINA conectada`);
+                await imprimirPrueba(impresoraCocina, "COCINA");
+                procesarColaCocina();
+            }
+        } catch (error) { 
+            mostrarToast("❌ Error: " + error.message);
+            document.getElementById("statusCocina").innerHTML = "🔴 Error";
+        }
+    }
+    
+    async function conectarCaja() {
+        try {
+            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
+            mostrarToast("🔍 Buscando impresora para CAJA...");
+            
+            const device = await Promise.race([
+                navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout 10s")), 10000))
+            ]);
+            
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            impresoraCaja = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+            
+            if (impresoraCaja) {
+                document.getElementById("statusCaja").innerHTML = "🟢 Conectada";
+                document.getElementById("statusCaja").className = "caja-on";
+                mostrarToast(`✅ Impresora CAJA conectada`);
+                await imprimirPrueba(impresoraCaja, "CAJA");
+                procesarColaCaja();
+            }
+        } catch (error) { 
+            mostrarToast("❌ Error: " + error.message);
+            document.getElementById("statusCaja").innerHTML = "🔴 Error";
+        }
+    }
+    
+    async function imprimirPrueba(impresora, nombre) {
+        try {
+            const prueba = `=== PRUEBA ${nombre} ===\n${new Date().toLocaleString()}\n\n`;
+            await impresora.writeValue(new TextEncoder().encode(prueba));
+        } catch(e) { console.log("Prueba falló:", e); }
+    }
+    
+    async function enviarImpresion(impresora, texto, tipo) {
+        if (!impresora) {
+            if (tipo === 'cocina') colaImpresionCocina.push(texto);
+            else colaImpresionCaja.push(texto);
+            mostrarToast(`⚠️ Impresora no conectada - pedido en cola`);
+            return false;
+        }
+        
+        try {
+            const textoOptimizado = texto.replace(/ {2,}/g, ' ').trim() + "\n\n";
+            const encoder = new TextEncoder();
+            const data = encoder.encode(textoOptimizado);
+            
+            // Enviar en chunks para mayor velocidad
+            const chunkSize = 128;
+            for (let i = 0; i < data.length; i += chunkSize) {
+                const chunk = data.slice(i, i + chunkSize);
+                await impresora.writeValue(chunk);
+                if (i + chunkSize < data.length) await new Promise(r => setTimeout(r, 5));
+            }
+            return true;
+        } catch (error) {
+            console.error("Error impresión:", error);
+            if (tipo === 'cocina') colaImpresionCocina.push(texto);
+            else colaImpresionCaja.push(texto);
+            mostrarToast(`❌ Error - pedido en cola (${error.message})`);
+            return false;
+        }
+    }
+    
+    async function imprimirCocina(texto) {
+        if (imprimiendoCocina) {
+            colaImpresionCocina.push(texto);
+            mostrarToast(`⏳ Impresora ocupada (${colaImpresionCocina.length} en cola)`);
+            return true;
+        }
+        imprimiendoCocina = true;
+        try {
+            const result = await enviarImpresion(impresoraCocina, texto, 'cocina');
+            if (result) mostrarToast("🖨️ Ticket enviado a COCINA");
+            return result;
+        } finally {
+            imprimiendoCocina = false;
+            setTimeout(() => procesarColaCocina(), 100);
+        }
+    }
+    
+    async function imprimirCaja(texto) {
+        if (imprimiendoCaja) {
+            colaImpresionCaja.push(texto);
+            mostrarToast(`⏳ Impresora ocupada (${colaImpresionCaja.length} en cola)`);
+            return true;
+        }
+        imprimiendoCaja = true;
+        try {
+            const result = await enviarImpresion(impresoraCaja, texto, 'caja');
+            if (result) mostrarToast("🖨️ Ticket enviado a CAJA");
+            return result;
+        } finally {
+            imprimiendoCaja = false;
+            setTimeout(() => procesarColaCaja(), 100);
+        }
+    }
+    
+    async function procesarColaCocina() {
+        if (colaImpresionCocina.length > 0 && impresoraCocina && !imprimiendoCocina) {
+            const siguiente = colaImpresionCocina.shift();
+            await imprimirCocina(siguiente);
+        }
+    }
+    
+    async function procesarColaCaja() {
+        if (colaImpresionCaja.length > 0 && impresoraCaja && !imprimiendoCaja) {
+            const siguiente = colaImpresionCaja.shift();
+            await imprimirCaja(siguiente);
+        }
+    }
+    
+    // ==================== SINCRONIZACIÓN ====================
     function iniciarSincronizacion() {
-        // Escuchar productos
         db.ref('productos').on('value', (snapshot) => {
-            if (snapshot.val()) {
-                productos = snapshot.val();
-                localStorage.setItem("productos", JSON.stringify(productos));
-                renderProductosMesero();
-                renderListaProductosAdmin();
-                actualizarDashboard();
-                console.log("🔄 Productos sincronizados");
-            }
+            if (snapshot.val()) { productos = snapshot.val(); localStorage.setItem("productos", JSON.stringify(productos)); renderProductosMesero(); renderListaProductosAdmin(); actualizarDashboard(); }
         });
-        
-        // Escuchar categorias
         db.ref('categorias').on('value', (snapshot) => {
-            if (snapshot.val()) {
-                categorias = snapshot.val();
-                localStorage.setItem("categorias", JSON.stringify(categorias));
-                renderCategoriasMesero();
-                renderListaCategoriasAdmin();
-            }
+            if (snapshot.val()) { categorias = snapshot.val(); localStorage.setItem("categorias", JSON.stringify(categorias)); renderCategoriasMesero(); renderListaCategoriasAdmin(); }
         });
-        
-        // Escuchar mesas
         db.ref('mesas').on('value', (snapshot) => {
-            if (snapshot.val()) {
-                mesas = snapshot.val();
-                localStorage.setItem("mesas", JSON.stringify(mesas));
-                renderMesas();
-                renderListaMesasAdmin();
-                console.log("🔄 Mesas sincronizadas");
-            }
+            if (snapshot.val()) { mesas = snapshot.val(); localStorage.setItem("mesas", JSON.stringify(mesas)); renderMesas(); renderListaMesasAdmin(); }
         });
-        
-        // Escuchar meseros
         db.ref('meseros').on('value', (snapshot) => {
-            if (snapshot.val()) {
-                meseros = snapshot.val();
-                localStorage.setItem("meseros", JSON.stringify(meseros));
-                renderListaMeserosAdmin();
-            }
+            if (snapshot.val()) { meseros = snapshot.val(); localStorage.setItem("meseros", JSON.stringify(meseros)); renderListaMeserosAdmin(); }
         });
-        
-        // Escuchar ventas
         db.ref('ventas').on('value', (snapshot) => {
-            if (snapshot.val()) {
-                ventas = snapshot.val();
-                localStorage.setItem("ventas", JSON.stringify(ventas));
-                renderVentas();
-                actualizarDashboard();
-            }
+            if (snapshot.val()) { ventas = snapshot.val(); localStorage.setItem("ventas", JSON.stringify(ventas)); renderVentas(); actualizarDashboard(); }
         });
-        
-        // Escuchar pedidos pendientes (¡IMPORTANTE PARA COCINA!)
         db.ref('pedidos_pendientes').on('value', (snapshot) => {
-            if (snapshot.val()) {
-                pedidosPendientes = Object.values(snapshot.val());
-                localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
-                renderPedidosCocina();
-                // Notificar a la tablet de cocina
-                if (document.getElementById("tabCocina").style.display !== "none") {
-                    mostrarToast("🆕 Nuevo pedido recibido en cocina");
-                }
-                console.log("🔄 Pedidos sincronizados:", pedidosPendientes.length);
-            }
+            if (snapshot.val()) { pedidosPendientes = Object.values(snapshot.val()); localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes)); renderPedidosCocina(); }
         });
-        
-        // Escuchar consumos de mesas (cuando otro mesero agrega productos)
         db.ref('consumos').on('value', (snapshot) => {
             const todosConsumos = snapshot.val() || {};
             for (let mesaId in todosConsumos) {
-                const consumo = todosConsumos[mesaId];
-                if (consumo && consumo.items) {
-                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(consumo.items));
-                    if (mesaSeleccionada === parseInt(mesaId)) {
-                        consumoActual = consumo.items;
-                        renderConsumo();
-                    }
+                if (todosConsumos[mesaId]?.items) {
+                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(todosConsumos[mesaId].items));
+                    if (mesaSeleccionada === parseInt(mesaId)) { consumoActual = todosConsumos[mesaId].items; renderConsumo(); }
                 }
             }
             renderMesas();
-            console.log("🔄 Consumos sincronizados");
         });
     }
     
-    // Guardar TODO en Firebase (para sincronizar entre dispositivos)
     async function guardarEnFirebase() {
         try {
             await db.ref('productos').set(productos);
@@ -336,75 +429,29 @@
             await db.ref('meseros').set(meseros);
             await db.ref('ventas').set(ventas);
             await db.ref('pedidos_pendientes').set(pedidosPendientes);
-            
-            // Guardar consumo de cada mesa
             for (const mesa of mesas) {
                 const consumo = JSON.parse(localStorage.getItem(`consumo_mesa_${mesa.id}`) || "[]");
                 await db.ref(`consumos/${mesa.id}`).set({ items: consumo, actualizado: Date.now() });
             }
-            console.log("✅ Datos guardados en Firebase");
             return true;
-        } catch (error) {
-            console.error("Error guardando en Firebase:", error);
-            mostrarToast("⚠️ Sin conexión - guardando localmente");
-            return false;
-        }
+        } catch (error) { return false; }
     }
     
-    // Cargar datos iniciales desde Firebase
     async function cargarDatosIniciales() {
-        mostrarToast("🔄 Cargando datos sincronizados...");
-        
+        mostrarToast("🔄 Cargando datos...");
         try {
             const [productosSnap, categoriasSnap, mesasSnap, meserosSnap, ventasSnap, pedidosSnap] = await Promise.all([
-                db.ref('productos').once('value'),
-                db.ref('categorias').once('value'),
-                db.ref('mesas').once('value'),
-                db.ref('meseros').once('value'),
-                db.ref('ventas').once('value'),
-                db.ref('pedidos_pendientes').once('value')
+                db.ref('productos').once('value'), db.ref('categorias').once('value'), db.ref('mesas').once('value'),
+                db.ref('meseros').once('value'), db.ref('ventas').once('value'), db.ref('pedidos_pendientes').once('value')
             ]);
+            productos = productosSnap.val() || []; categorias = categoriasSnap.val() || []; mesas = mesasSnap.val() || [];
+            meseros = meserosSnap.val() || []; ventas = ventasSnap.val() || []; pedidosPendientes = pedidosSnap.val() ? Object.values(pedidosSnap.val()) : [];
             
-            productos = productosSnap.val() || [];
-            categorias = categoriasSnap.val() || [];
-            mesas = mesasSnap.val() || [];
-            meseros = meserosSnap.val() || [];
-            ventas = ventasSnap.val() || [];
-            pedidosPendientes = pedidosSnap.val() ? Object.values(pedidosSnap.val()) : [];
+            if (productos.length === 0) productos = [{id:1, categoria:"Sashimi", nombre:"Salmón", precio:120, costo:80, stock:20},{id:2, categoria:"Nigiri", nombre:"Anguila", precio:95, costo:60, stock:15},{id:3, categoria:"Rollos", nombre:"California", precio:110, costo:70, stock:25},{id:4, categoria:"Rollos", nombre:"Sushi Mango", precio:135, costo:85, stock:12}];
+            if (categorias.length === 0) categorias = ["Sashimi", "Nigiri", "Rollos", "Temaki", "Bebidas"];
+            if (mesas.length === 0) mesas = [{id:1, nombre:"Mesa 1"},{id:2, nombre:"Mesa 2"},{id:3, nombre:"Mesa 3"},{id:4, nombre:"Mesa 4"},{id:5, nombre:"Mesa 5"},{id:6, nombre:"Mesa 6"},{id:7, nombre:"Mesa 7"},{id:8, nombre:"Mesa 8"}];
+            if (meseros.length === 0) meseros = [{nombre:"Juan", pin:"1111"},{nombre:"Ana", pin:"2222"},{nombre:"Carlos", pin:"3333"}];
             
-            // Si no hay datos en Firebase, crear datos por defecto
-            if (productos.length === 0) {
-                productos = [
-                    {id:1, categoria:"Sashimi", nombre:"Salmón", precio:120, costo:80, stock:20},
-                    {id:2, categoria:"Nigiri", nombre:"Anguila", precio:95, costo:60, stock:15},
-                    {id:3, categoria:"Rollos", nombre:"California", precio:110, costo:70, stock:25},
-                    {id:4, categoria:"Rollos", nombre:"Sushi Mango", precio:135, costo:85, stock:12}
-                ];
-                await db.ref('productos').set(productos);
-            }
-            
-            if (categorias.length === 0) {
-                categorias = ["Sashimi", "Nigiri", "Rollos", "Temaki", "Bebidas"];
-                await db.ref('categorias').set(categorias);
-            }
-            
-            if (mesas.length === 0) {
-                mesas = [
-                    {id:1, nombre:"Mesa 1"}, {id:2, nombre:"Mesa 2"}, {id:3, nombre:"Mesa 3"},
-                    {id:4, nombre:"Mesa 4"}, {id:5, nombre:"Mesa 5"}, {id:6, nombre:"Mesa 6"},
-                    {id:7, nombre:"Mesa 7"}, {id:8, nombre:"Mesa 8"}
-                ];
-                await db.ref('mesas').set(mesas);
-            }
-            
-            if (meseros.length === 0) {
-                meseros = [
-                    {nombre:"Juan", pin:"1111"}, {nombre:"Ana", pin:"2222"}, {nombre:"Carlos", pin:"3333"}
-                ];
-                await db.ref('meseros').set(meseros);
-            }
-            
-            // Guardar en localStorage como respaldo
             localStorage.setItem("productos", JSON.stringify(productos));
             localStorage.setItem("categorias", JSON.stringify(categorias));
             localStorage.setItem("mesas", JSON.stringify(mesas));
@@ -412,21 +459,13 @@
             localStorage.setItem("ventas", JSON.stringify(ventas));
             localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
             
-            // Cargar consumos
             const consumosSnap = await db.ref('consumos').once('value');
             const todosConsumos = consumosSnap.val() || {};
             for (let mesaId in todosConsumos) {
-                if (todosConsumos[mesaId] && todosConsumos[mesaId].items) {
-                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(todosConsumos[mesaId].items));
-                } else {
-                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify([]));
-                }
+                if (todosConsumos[mesaId]?.items) localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(todosConsumos[mesaId].items));
+                else localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify([]));
             }
-            
         } catch (error) {
-            console.error("Error cargando desde Firebase:", error);
-            mostrarToast("⚠️ Usando datos locales");
-            // Cargar desde localStorage
             productos = JSON.parse(localStorage.getItem("productos") || "[]");
             categorias = JSON.parse(localStorage.getItem("categorias") || "[]");
             mesas = JSON.parse(localStorage.getItem("mesas") || "[]");
@@ -434,83 +473,10 @@
             ventas = JSON.parse(localStorage.getItem("ventas") || "[]");
             pedidosPendientes = JSON.parse(localStorage.getItem("pedidos_pendientes") || "[]");
         }
-        
         ivaPorcentaje = parseInt(localStorage.getItem("config_iva") || "16");
         cargarConfiguracion();
-        
-        renderMesas();
-        renderCategoriasMesero();
-        renderProductosMesero();
-        renderPedidosCocina();
-        renderVentas();
-        actualizarDashboard();
-        
+        renderMesas(); renderCategoriasMesero(); renderProductosMesero(); renderPedidosCocina(); renderVentas(); actualizarDashboard();
         mostrarToast("✅ Datos sincronizados");
-    }
-    
-    // ==================== CONEXIÓN IMPRESORAS ====================
-    async function conectarCocina() {
-        try {
-            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
-            mostrarToast("🔍 Buscando impresora térmica para COCINA...");
-            const device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
-                optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
-            });
-            const server = await device.gatt.connect();
-            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
-            impresoraCocina = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
-            if (impresoraCocina) {
-                document.getElementById("statusCocina").innerHTML = "🟢 Conectada";
-                document.getElementById("statusCocina").className = "cocina-on";
-                mostrarToast(`✅ Impresora de COCINA conectada`);
-                await impresoraCocina.writeValue(new TextEncoder().encode("=== IMPRESORA COCINA LISTA ===\n" + new Date().toLocaleString() + "\n\n"));
-            }
-        } catch (error) { mostrarToast("❌ Error: " + error.message); }
-    }
-    
-    async function conectarCaja() {
-        try {
-            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
-            mostrarToast("🔍 Buscando impresora térmica para CAJA...");
-            const device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
-                optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
-            });
-            const server = await device.gatt.connect();
-            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
-            impresoraCaja = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
-            if (impresoraCaja) {
-                document.getElementById("statusCaja").innerHTML = "🟢 Conectada";
-                document.getElementById("statusCaja").className = "caja-on";
-                mostrarToast(`✅ Impresora de CAJA conectada`);
-                await impresoraCaja.writeValue(new TextEncoder().encode("=== IMPRESORA CAJA LISTA ===\n" + new Date().toLocaleString() + "\n\n"));
-            }
-        } catch (error) { mostrarToast("❌ Error: " + error.message); }
-    }
-    
-    async function imprimirCocina(texto) {
-        if (!impresoraCocina) { mostrarToast("❌ Impresora de COCINA no conectada"); return false; }
-        try { 
-            await impresoraCocina.writeValue(new TextEncoder().encode(texto + "\n\n\n\n")); 
-            mostrarToast("🖨️ Ticket enviado a COCINA");
-            return true; 
-        } catch (error) { 
-            mostrarToast("❌ Error impresión: " + error.message); 
-            return false; 
-        }
-    }
-    
-    async function imprimirCaja(texto) {
-        if (!impresoraCaja) { mostrarToast("❌ Impresora de CAJA no conectada"); return false; }
-        try { 
-            await impresoraCaja.writeValue(new TextEncoder().encode(texto + "\n\n\n\n")); 
-            mostrarToast("🖨️ Ticket enviado a CAJA");
-            return true; 
-        } catch (error) { 
-            mostrarToast("❌ Error impresión: " + error.message); 
-            return false; 
-        }
     }
     
     // ==================== FUNCIONES PRINCIPALES ====================
@@ -523,7 +489,7 @@
             document.getElementById("loginModal").style.display = "none";
             document.getElementById("screenMain").classList.add("active");
             document.getElementById("usuarioActual").innerHTML = `👨‍🍳 ${user.nombre}`;
-            mostrarToast(`✅ Bienvenido ${user.nombre} - Sistema sincronizado`);
+            mostrarToast(`✅ Bienvenido ${user.nombre}`);
         } else { mostrarToast("❌ Usuario o PIN incorrecto"); }
     }
     
@@ -546,11 +512,8 @@
         let mesa = mesas.find(m => m.id === id);
         document.getElementById("mesaNombre").innerText = mesa?.nombre || id;
         consumoActual = JSON.parse(localStorage.getItem(`consumo_mesa_${id}`) || "[]");
-        renderConsumo();
-        renderMesas();
-        document.getElementById("panelPedido").style.display = "block";
-        carrito = [];
-        renderCarrito();
+        renderConsumo(); renderMesas(); document.getElementById("panelPedido").style.display = "block";
+        carrito = []; renderCarrito();
     }
     
     function renderConsumo() {
@@ -561,7 +524,7 @@
         else cont.innerHTML = consumoActual.map((item, idx) => {
             total += item.precio * item.cantidad;
             return `<div class="carrito-item">
-                <div><strong>${item.cantidad}x</strong> ${item.nombre} ${item.nota ? `📝 ${item.nota}` : ''}<br><small style="color:#888;">Agregado por: ${item.agregadoPor || 'desconocido'}</small></div>
+                <div><strong>${item.cantidad}x</strong> ${item.nombre} ${item.nota ? `📝 ${item.nota}` : ''}</div>
                 <div>$${(item.precio * item.cantidad).toFixed(2)} <button onclick="eliminarItemConsumo(${idx})" style="background:#8B0000; border:none; padding:5px 12px; border-radius:15px;">🗑️</button></div>
             </div>`;
         }).join("");
@@ -573,8 +536,7 @@
         consumoActual.splice(idx, 1);
         localStorage.setItem(`consumo_mesa_${mesaSeleccionada}`, JSON.stringify(consumoActual));
         await db.ref(`consumos/${mesaSeleccionada}`).set({ items: consumoActual, actualizado: Date.now() });
-        renderConsumo();
-        renderMesas();
+        renderConsumo(); renderMesas();
     }
     
     function renderCategoriasMesero() {
@@ -593,9 +555,7 @@
         let busqueda = document.getElementById("buscadorProd")?.value.toLowerCase() || "";
         let filtrados = productos.filter(p => (catFiltroMesero === null || p.categoria === catFiltroMesero) && (busqueda === "" || p.nombre.toLowerCase().includes(busqueda)) && p.stock > 0);
         cont.innerHTML = filtrados.map(p => {
-            const imagenHtml = p.imagen ? 
-                `<img src="${p.imagen}" class="producto-imagen">` : 
-                `<div style="font-size:2rem;">🍣</div>`;
+            const imagenHtml = p.imagen ? `<img src="${p.imagen}" class="producto-imagen">` : `<div style="font-size:2rem;">🍣</div>`;
             return `<div class="producto-card" onclick="agregarAlCarrito(${p.id})">
                 ${imagenHtml}
                 <div class="product-name">${escapeHtml(p.nombre)}</div>
@@ -652,14 +612,14 @@
         let ticket = "=".repeat(32) + "\n        🍣 COCINA 🍣\n" + "=".repeat(32) + "\n";
         ticket += `MESA: ${pedido.mesaNombre}\nHORA: ${pedido.hora}\nMESERO: ${pedido.mesero}\n` + "-".repeat(32) + "\n";
         pedido.items.forEach(i => { ticket += `${i.cantidad}x    ${i.nombre} ${i.nota ? `📝 ${i.nota}` : ''}\n`; });
-        ticket += "-".repeat(32) + "\n     👨‍🍳 ¡A COCINAR!\n" + "=".repeat(32) + "\n\n";
+        ticket += "-".repeat(32) + "\n     👨‍🍳 ¡A COCINAR!\n" + "=".repeat(32) + "\n";
         return ticket;
     }
     
     function generarTicketCliente(venta, mesaNombre, metodo) {
         let ticket = "=".repeat(32) + `\n        AppInc POS\n` + "=".repeat(32) + `\nMESA: ${mesaNombre}\nFECHA: ${new Date().toLocaleString()}\nMESERO: ${venta.mesero}\n` + "-".repeat(32) + "\n";
         venta.items.forEach(i => { ticket += `${i.cantidad}x    ${i.nombre}   $${(i.precio * i.cantidad).toFixed(2)}\n`; });
-        ticket += "-".repeat(32) + `\nSUBTOTAL: $${venta.subtotal.toFixed(2)}\nIVA ${ivaPorcentaje}%: $${venta.iva.toFixed(2)}\nTOTAL: $${venta.total.toFixed(2)}\nPAGO: ${metodo}\n` + "=".repeat(32) + "\n¡GRACIAS!\n\n";
+        ticket += "-".repeat(32) + `\nSUBTOTAL: $${venta.subtotal.toFixed(2)}\nIVA ${ivaPorcentaje}%: $${venta.iva.toFixed(2)}\nTOTAL: $${venta.total.toFixed(2)}\nPAGO: ${metodo}\n` + "=".repeat(32) + "\n¡GRACIAS!\n";
         return ticket;
     }
     
@@ -668,47 +628,27 @@
         if(carrito.length === 0) { mostrarToast("❌ Agrega productos"); return; }
         if(!meseroActual) { mostrarToast("❌ No hay mesero logueado"); return; }
         
-        // Verificar stock
         for(let item of carrito) {
             let prod = productos.find(p => p.id === item.id);
-            if(!prod || prod.stock < item.cantidad) {
-                mostrarToast(`❌ Stock insuficiente para ${item.nombre}`);
-                return;
-            }
+            if(!prod || prod.stock < item.cantidad) { mostrarToast(`❌ Stock insuficiente para ${item.nombre}`); return; }
         }
-        
-        // Actualizar stock
         for(let item of carrito) {
             let prod = productos.find(p => p.id === item.id);
             if(prod) prod.stock -= item.cantidad;
         }
         
         let nuevoPedido = {
-            id: Date.now(),
-            mesaId: mesaSeleccionada,
-            mesaNombre: mesas.find(m => m.id === mesaSeleccionada)?.nombre || "Mesa",
+            id: Date.now(), mesaId: mesaSeleccionada, mesaNombre: mesas.find(m => m.id === mesaSeleccionada)?.nombre || "Mesa",
             items: carrito.map(i => ({ id: i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, nota: i.nota || "" })),
-            mesero: meseroActual.nombre,
-            hora: new Date().toLocaleTimeString(),
-            estado: "pendiente",
-            timestamp: Date.now()
+            mesero: meseroActual.nombre, hora: new Date().toLocaleTimeString(), estado: "pendiente", timestamp: Date.now()
         };
         
-        // Agregar al consumo de la mesa
         for(let item of carrito) {
             let existente = consumoActual.find(c => c.id === item.id && c.nota === item.nota);
-            if(existente) {
-                existente.cantidad += item.cantidad;
-            } else {
-                consumoActual.push({ 
-                    id: item.id, nombre: item.nombre, precio: item.precio, 
-                    costo: item.costo, cantidad: item.cantidad, nota: item.nota || "",
-                    agregadoPor: meseroActual.nombre
-                });
-            }
+            if(existente) existente.cantidad += item.cantidad;
+            else consumoActual.push({ id: item.id, nombre: item.nombre, precio: item.precio, costo: item.costo, cantidad: item.cantidad, nota: item.nota || "", agregadoPor: meseroActual.nombre });
         }
         
-        // Guardar en Firebase (esto sincroniza con TODOS los dispositivos)
         pedidosPendientes.push(nuevoPedido);
         await db.ref('pedidos_pendientes').set(pedidosPendientes);
         await db.ref('productos').set(productos);
@@ -718,19 +658,12 @@
         localStorage.setItem("productos", JSON.stringify(productos));
         localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
         
-        // Imprimir ticket en cocina
         let ticket = generarTicketCocina(nuevoPedido);
         await imprimirCocina(ticket);
         
-        renderConsumo();
-        renderProductosMesero();
-        renderPedidosCocina();
-        renderMesas();
-        
-        carrito = [];
-        renderCarrito();
-        
-        mostrarToast(`✅ Pedido enviado a cocina - Mesa ${nuevoPedido.mesaNombre} por ${meseroActual.nombre}`);
+        renderConsumo(); renderProductosMesero(); renderPedidosCocina(); renderMesas();
+        carrito = []; renderCarrito();
+        mostrarToast(`✅ Pedido enviado a cocina - Mesa ${nuevoPedido.mesaNombre}`);
     }
     
     function renderPedidosCocina() {
@@ -785,12 +718,10 @@
         let total = subtotal + iva;
         let ganancia = consumoActual.reduce((s,i) => s + (i.precio - (i.costo || 0)) * i.cantidad, 0);
         
-        let venta = {
-            id: Date.now(), fecha: new Date().toLocaleString(), mesa: mesaNombre,
-            items: [...consumoActual], subtotal, iva, total, ganancia, metodo, mesero: meseroActual?.nombre
-        };
+        let venta = { id: Date.now(), fecha: new Date().toLocaleString(), mesa: mesaNombre, items: [...consumoActual], subtotal, iva, total, ganancia, metodo, mesero: meseroActual?.nombre };
         
-        await imprimirCaja(generarTicketCliente(venta, mesaNombre, metodo));
+        let ticket = generarTicketCliente(venta, mesaNombre, metodo);
+        await imprimirCaja(ticket);
         
         ventas.push(venta);
         await db.ref('ventas').set(ventas);
@@ -799,14 +730,11 @@
         localStorage.removeItem(`consumo_mesa_${mesaSeleccionada}`);
         localStorage.setItem("ventas", JSON.stringify(ventas));
         
-        consumoActual = [];
-        mesaSeleccionada = null;
-        renderMesas();
-        renderConsumo();
-        renderVentas();
+        consumoActual = []; mesaSeleccionada = null;
+        renderMesas(); renderConsumo(); renderVentas();
         document.getElementById("panelPedido").style.display = "none";
         actualizarDashboard();
-        mostrarToast(`✅ Pago $${total.toFixed(2)} completado por ${meseroActual?.nombre}`);
+        mostrarToast(`✅ Pago $${total.toFixed(2)} completado`);
     }
     
     function renderVentas() {
@@ -817,212 +745,40 @@
     }
     
     // ==================== ADMIN ====================
-    function abrirAdmin() { 
-        let pass = prompt("🔐 Contraseña de ADMIN:"); 
-        if(pass === "1234") { 
-            document.getElementById("adminPanel").style.display = "block"; 
-            renderListaMesasAdmin(); 
-            renderListaMeserosAdmin(); 
-            renderListaCategoriasAdmin(); 
-            renderListaProductosAdmin(); 
-            actualizarDashboard(); 
-        } else if(pass) mostrarToast("❌ Contraseña incorrecta"); 
-    }
-    
+    function abrirAdmin() { let pass = prompt("🔐 Contraseña:"); if(pass === "1234") { document.getElementById("adminPanel").style.display = "block"; renderListaMesasAdmin(); renderListaMeserosAdmin(); renderListaCategoriasAdmin(); renderListaProductosAdmin(); actualizarDashboard(); } else if(pass) mostrarToast("❌ Contraseña incorrecta"); }
     function cerrarAdmin() { document.getElementById("adminPanel").style.display = "none"; }
     
     function actualizarDashboard() { 
         let totalVentas = ventas ? ventas.reduce((s,v) => s + v.total, 0) : 0; 
-        document.getElementById("statsGrid").innerHTML = `
-            <div class="stat-card"><div class="stat-number">${productos.length}</div><div>Productos</div></div>
-            <div class="stat-card"><div class="stat-number">${productos.filter(p=>p.stock<5).length}</div><div>Stock bajo</div></div>
-            <div class="stat-card"><div class="stat-number">${mesas.length}</div><div>Mesas</div></div>
-            <div class="stat-card"><div class="stat-number">$${totalVentas.toFixed(2)}</div><div>Total ventas</div></div>
-        `; 
+        document.getElementById("statsGrid").innerHTML = `<div class="stat-card"><div class="stat-number">${productos.length}</div><div>Productos</div></div><div class="stat-card"><div class="stat-number">${productos.filter(p=>p.stock<5).length}</div><div>Stock bajo</div></div><div class="stat-card"><div class="stat-number">${mesas.length}</div><div>Mesas</div></div><div class="stat-card"><div class="stat-number">$${totalVentas.toFixed(2)}</div><div>Total ventas</div></div>`; 
     }
     
-    function renderListaMesasAdmin() { 
-        let cont = document.getElementById("listaMesas"); 
-        cont.innerHTML = mesas.map(m => `<div style="display:flex; justify-content:space-between;"><span>🪑 ${m.nombre}</span><button onclick="eliminarMesa(${m.id})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); 
-    }
-    
-    function agregarMesa() { 
-        let nom = document.getElementById("nuevaMesa").value.trim(); 
-        if(nom) { 
-            let newId = mesas.length ? Math.max(...mesas.map(m=>m.id)) + 1 : 1; 
-            mesas.push({ id: newId, nombre: nom }); 
-            guardarEnFirebase(); 
-            renderListaMesasAdmin(); 
-            renderMesas(); 
-            document.getElementById("nuevaMesa").value = ""; 
-            mostrarToast("✅ Mesa agregada"); 
-        } 
-    }
-    
-    function eliminarMesa(id) { 
-        mesas = mesas.filter(m => m.id !== id); 
-        guardarEnFirebase(); 
-        renderListaMesasAdmin(); 
-        renderMesas(); 
-        if(mesaSeleccionada === id) { 
-            mesaSeleccionada = null; 
-            document.getElementById("panelPedido").style.display = "none"; 
-        } 
-    }
-    
-    function renderListaMeserosAdmin() { 
-        let cont = document.getElementById("listaMeserosAdmin"); 
-        cont.innerHTML = meseros.map((m, i) => `<div style="display:flex; justify-content:space-between;"><span>👨‍🍳 ${m.nombre} (PIN: ${m.pin})</span><button onclick="eliminarMeseroAdmin(${i})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); 
-    }
-    
-    function agregarMeseroAdmin() { 
-        let nom = document.getElementById("nuevoMesero").value.trim(); 
-        let pin = document.getElementById("nuevoPin").value; 
-        if(!nom || !pin || pin.length !== 4) { mostrarToast("❌ Nombre y PIN de 4 dígitos"); return; } 
-        if(meseros.find(m => m.nombre === nom)) { mostrarToast("❌ Ya existe"); return; } 
-        meseros.push({ nombre: nom, pin }); 
-        guardarEnFirebase(); 
-        renderListaMeserosAdmin(); 
-        document.getElementById("nuevoMesero").value = ""; 
-        document.getElementById("nuevoPin").value = ""; 
-        mostrarToast("✅ Mesero agregado"); 
-    }
-    
-    function eliminarMeseroAdmin(i) { 
-        if(meseros[i]?.nombre === meseroActual?.nombre) { 
-            meseroActual = null; 
-            document.getElementById("usuarioActual").innerHTML = ""; 
-        } 
-        meseros.splice(i,1); 
-        guardarEnFirebase(); 
-        renderListaMeserosAdmin(); 
-    }
-    
-    function renderListaCategoriasAdmin() { 
-        let cont = document.getElementById("listaCategorias"); 
-        cont.innerHTML = categorias.map((c, i) => `<div style="display:flex; justify-content:space-between;"><span>📁 ${c}</span><button onclick="eliminarCategoriaAdmin(${i})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); 
-        let sel = document.getElementById("catProducto"); 
-        sel.innerHTML = categorias.map(c => `<option value="${c}">${c}</option>`).join(""); 
-    }
-    
-    function agregarCategoriaAdmin() { 
-        let cat = document.getElementById("nuevaCat").value.trim(); 
-        if(!cat || categorias.includes(cat)) { mostrarToast("❌ Categoría inválida"); return; } 
-        categorias.push(cat); 
-        guardarEnFirebase(); 
-        renderListaCategoriasAdmin(); 
-        renderCategoriasMesero(); 
-        document.getElementById("nuevaCat").value = ""; 
-        mostrarToast("✅ Categoría agregada"); 
-    }
-    
-    function eliminarCategoriaAdmin(i) { 
-        categorias.splice(i,1); 
-        guardarEnFirebase(); 
-        renderListaCategoriasAdmin(); 
-        renderCategoriasMesero(); 
-    }
-    
+    function renderListaMesasAdmin() { let cont = document.getElementById("listaMesas"); cont.innerHTML = mesas.map(m => `<div style="display:flex; justify-content:space-between;"><span>🪑 ${m.nombre}</span><button onclick="eliminarMesa(${m.id})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); }
+    function agregarMesa() { let nom = document.getElementById("nuevaMesa").value.trim(); if(nom) { let newId = mesas.length ? Math.max(...mesas.map(m=>m.id)) + 1 : 1; mesas.push({ id: newId, nombre: nom }); guardarEnFirebase(); renderListaMesasAdmin(); renderMesas(); document.getElementById("nuevaMesa").value = ""; mostrarToast("✅ Mesa agregada"); } }
+    function eliminarMesa(id) { mesas = mesas.filter(m => m.id !== id); guardarEnFirebase(); renderListaMesasAdmin(); renderMesas(); if(mesaSeleccionada === id) { mesaSeleccionada = null; document.getElementById("panelPedido").style.display = "none"; } }
+    function renderListaMeserosAdmin() { let cont = document.getElementById("listaMeserosAdmin"); cont.innerHTML = meseros.map((m, i) => `<div style="display:flex; justify-content:space-between;"><span>👨‍🍳 ${m.nombre} (PIN: ${m.pin})</span><button onclick="eliminarMeseroAdmin(${i})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); }
+    function agregarMeseroAdmin() { let nom = document.getElementById("nuevoMesero").value.trim(); let pin = document.getElementById("nuevoPin").value; if(!nom || !pin || pin.length !== 4) { mostrarToast("❌ Nombre y PIN de 4 dígitos"); return; } if(meseros.find(m => m.nombre === nom)) { mostrarToast("❌ Ya existe"); return; } meseros.push({ nombre: nom, pin }); guardarEnFirebase(); renderListaMeserosAdmin(); document.getElementById("nuevoMesero").value = ""; document.getElementById("nuevoPin").value = ""; mostrarToast("✅ Mesero agregado"); }
+    function eliminarMeseroAdmin(i) { if(meseros[i]?.nombre === meseroActual?.nombre) { meseroActual = null; document.getElementById("usuarioActual").innerHTML = ""; } meseros.splice(i,1); guardarEnFirebase(); renderListaMeserosAdmin(); }
+    function renderListaCategoriasAdmin() { let cont = document.getElementById("listaCategorias"); cont.innerHTML = categorias.map((c, i) => `<div style="display:flex; justify-content:space-between;"><span>📁 ${c}</span><button onclick="eliminarCategoriaAdmin(${i})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); let sel = document.getElementById("catProducto"); sel.innerHTML = categorias.map(c => `<option value="${c}">${c}</option>`).join(""); }
+    function agregarCategoriaAdmin() { let cat = document.getElementById("nuevaCat").value.trim(); if(!cat || categorias.includes(cat)) { mostrarToast("❌ Categoría inválida"); return; } categorias.push(cat); guardarEnFirebase(); renderListaCategoriasAdmin(); renderCategoriasMesero(); document.getElementById("nuevaCat").value = ""; mostrarToast("✅ Categoría agregada"); }
+    function eliminarCategoriaAdmin(i) { categorias.splice(i,1); guardarEnFirebase(); renderListaCategoriasAdmin(); renderCategoriasMesero(); }
     async function agregarProductoAdmin() { 
-        let cat = document.getElementById("catProducto").value; 
-        let nom = document.getElementById("nomProducto").value.trim(); 
-        let precio = parseFloat(document.getElementById("precioProducto").value); 
-        let costo = parseFloat(document.getElementById("costoProducto").value); 
-        let stock = parseInt(document.getElementById("stockProducto").value); 
-        
-        if(!cat || !nom || isNaN(precio) || isNaN(costo) || isNaN(stock)) { 
-            mostrarToast("❌ Complete campos"); 
-            return; 
-        } 
-        
+        let cat = document.getElementById("catProducto").value, nom = document.getElementById("nomProducto").value.trim(), precio = parseFloat(document.getElementById("precioProducto").value), costo = parseFloat(document.getElementById("costoProducto").value), stock = parseInt(document.getElementById("stockProducto").value);
+        if(!cat || !nom || isNaN(precio) || isNaN(costo) || isNaN(stock)) { mostrarToast("❌ Complete campos"); return; }
         let newId = productos.length ? Math.max(...productos.map(p=>p.id)) + 1 : 1;
-        
         let imagenBase64 = null;
         const fileInput = document.getElementById("imgProducto");
-        if (fileInput && fileInput.files && fileInput.files[0]) {
-            imagenBase64 = await imagenABase64(fileInput.files[0]);
-            mostrarToast("📸 Procesando imagen...");
-        }
-        
-        productos.push({ 
-            id: newId, 
-            categoria: cat, 
-            nombre: nom, 
-            precio, 
-            costo, 
-            stock, 
-            descripcion: document.getElementById("descProducto").value, 
-            imagen: imagenBase64 
-        }); 
-        
-        await guardarEnFirebase(); 
-        renderListaProductosAdmin(); 
-        renderProductosMesero(); 
-        
-        document.getElementById("nomProducto").value = ""; 
-        document.getElementById("precioProducto").value = ""; 
-        document.getElementById("costoProducto").value = ""; 
-        document.getElementById("stockProducto").value = ""; 
-        document.getElementById("descProducto").value = ""; 
-        document.getElementById("imgProducto").value = "";
-        document.getElementById("newImagenPreview").innerHTML = "";
-        
+        if (fileInput && fileInput.files && fileInput.files[0]) { imagenBase64 = await imagenABase64(fileInput.files[0]); mostrarToast("📸 Procesando imagen..."); }
+        productos.push({ id: newId, categoria: cat, nombre: nom, precio, costo, stock, descripcion: document.getElementById("descProducto").value, imagen: imagenBase64 }); 
+        await guardarEnFirebase(); renderListaProductosAdmin(); renderProductosMesero(); 
+        document.getElementById("nomProducto").value = ""; document.getElementById("precioProducto").value = ""; document.getElementById("costoProducto").value = ""; document.getElementById("stockProducto").value = ""; document.getElementById("descProducto").value = ""; document.getElementById("imgProducto").value = ""; document.getElementById("newImagenPreview").innerHTML = "";
         mostrarToast(`✓ Producto "${nom}" agregado ${imagenBase64 ? 'con imagen' : 'sin imagen'}`); 
     }
-    
-    function renderListaProductosAdmin() { 
-        let cont = document.getElementById("listaProductos"); 
-        cont.innerHTML = productos.map(p => {
-            const miniatura = p.imagen ? 
-                `<img src="${p.imagen}" style="width:40px; height:40px; object-fit:cover; border-radius:8px;">` : 
-                `<div style="width:40px; height:40px; background:#333; border-radius:8px; display:flex; align-items:center; justify-content:center;">📦</div>`;
-            
-            return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:#0a0a0a; border-radius:16px; margin-bottom:5px;">
-                <div style="display:flex; gap:10px; align-items:center;">
-                    ${miniatura}
-                    <div>
-                        <strong>${escapeHtml(p.nombre)}</strong><br>
-                        <small>$${p.precio} | Stock: ${p.stock}</small>
-                    </div>
-                </div>
-                <button onclick="eliminarProductoAdmin(${p.id})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button>
-            </div>`;
-        }).join(""); 
-    }
-    
-    function eliminarProductoAdmin(id) { 
-        productos = productos.filter(p => p.id !== id); 
-        guardarEnFirebase(); 
-        renderListaProductosAdmin(); 
-        renderProductosMesero(); 
-    }
-    
-    function guardarConfiguracion() { 
-        let nombre = document.getElementById("editNombreNegocio").value; 
-        if(nombre) localStorage.setItem("config_nombre", nombre); 
-        ivaPorcentaje = parseInt(document.getElementById("configIva").value); 
-        localStorage.setItem("config_iva", ivaPorcentaje); 
-        document.getElementById("nombreNegocio").innerText = nombre || "AppInc POS"; 
-        mostrarToast("✓ Configuración guardada"); 
-        guardarEnFirebase(); 
-    }
-    
-    function cargarConfiguracion() { 
-        let nombre = localStorage.getItem("config_nombre") || "AppInc POS"; 
-        let iva = localStorage.getItem("config_iva"); 
-        document.getElementById("nombreNegocio").innerText = nombre; 
-        document.getElementById("editNombreNegocio").value = nombre; 
-        if(iva) document.getElementById("configIva").value = iva; 
-    }
-    
-    function cambiarTab(tab) { 
-        document.getElementById("tabMesas").style.display = tab === "mesas" ? "block" : "none"; 
-        document.getElementById("tabCocina").style.display = tab === "cocina" ? "block" : "none"; 
-        document.getElementById("tabVentas").style.display = tab === "ventas" ? "block" : "none"; 
-        document.querySelectorAll(".tab-btn").forEach((btn,i) => btn.classList.toggle("active", (tab==="mesas"&&i===0)||(tab==="cocina"&&i===1)||(tab==="ventas"&&i===2))); 
-        if(tab === "cocina") renderPedidosCocina(); 
-        if(tab === "ventas") renderVentas(); 
-    }
+    function renderListaProductosAdmin() { let cont = document.getElementById("listaProductos"); cont.innerHTML = productos.map(p => { const miniatura = p.imagen ? `<img src="${p.imagen}" style="width:40px; height:40px; object-fit:cover; border-radius:8px;">` : `<div style="width:40px; height:40px; background:#333; border-radius:8px; display:flex; align-items:center; justify-content:center;">📦</div>`; return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:#0a0a0a; border-radius:16px; margin-bottom:5px;"><div style="display:flex; gap:10px; align-items:center;">${miniatura}<div><strong>${escapeHtml(p.nombre)}</strong><br><small>$${p.precio} | Stock: ${p.stock}</small></div></div><button onclick="eliminarProductoAdmin(${p.id})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`; }).join(""); }
+    function eliminarProductoAdmin(id) { productos = productos.filter(p => p.id !== id); guardarEnFirebase(); renderListaProductosAdmin(); renderProductosMesero(); }
+    function guardarConfiguracion() { let nombre = document.getElementById("editNombreNegocio").value; if(nombre) localStorage.setItem("config_nombre", nombre); ivaPorcentaje = parseInt(document.getElementById("configIva").value); localStorage.setItem("config_iva", ivaPorcentaje); document.getElementById("nombreNegocio").innerText = nombre || "AppInc POS"; mostrarToast("✓ Configuración guardada"); guardarEnFirebase(); }
+    function cargarConfiguracion() { let nombre = localStorage.getItem("config_nombre") || "AppInc POS"; let iva = localStorage.getItem("config_iva"); document.getElementById("nombreNegocio").innerText = nombre; document.getElementById("editNombreNegocio").value = nombre; if(iva) document.getElementById("configIva").value = iva; }
+    function cambiarTab(tab) { document.getElementById("tabMesas").style.display = tab === "mesas" ? "block" : "none"; document.getElementById("tabCocina").style.display = tab === "cocina" ? "block" : "none"; document.getElementById("tabVentas").style.display = tab === "ventas" ? "block" : "none"; document.querySelectorAll(".tab-btn").forEach((btn,i) => btn.classList.toggle("active", (tab==="mesas"&&i===0)||(tab==="cocina"&&i===1)||(tab==="ventas"&&i===2))); if(tab === "cocina") renderPedidosCocina(); if(tab === "ventas") renderVentas(); }
     
     // ==================== INICIALIZAR ====================
     (async function init() {
