@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>AppInc POS</title>
+    <title>AppInc POS - Sincronizado</title>
     <link rel="manifest" href="data:application/manifest+json,{%22name%22:%22AppInc%20POS%22,%22short_name%22:%22AppInc%20POS%22,%22description%22:%22Sistema%20POS%20para%20restaurante%22,%22start_url%22:%22/%22,%22display%22:%22standalone%22,%22theme_color%22:%22#8B0000%22,%22background_color%22:%22#0a0a0a%22,%22orientation%22:%22portrait%22,%22icons%22:[{%22src%22:%22data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%238B0000'/%3E%3Ctext x='50' y='67' font-size='50' text-anchor='middle' fill='%23FFD700'%3E📱%3C/text%3E%3C/svg%3E%22,%22sizes%22:%22any%22,%22type%22:%22image/svg+xml%22,%22purpose%22:%22any%22}]}">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -63,8 +63,6 @@
         .install-banner { position: fixed; bottom: 70px; left: 20px; right: 20px; background: #1a1a1a; border: 1px solid #FFD700; border-radius: 20px; padding: 15px; display: none; align-items: center; justify-content: space-between; z-index: 2000; backdrop-filter: blur(10px); }
         .install-banner button { background: #FFD700; border: none; padding: 8px 20px; border-radius: 30px; color: #1a0000; font-weight: bold; cursor: pointer; }
         .img-preview { width: 80px; height: 80px; border-radius: 15px; margin-top: 10px; object-fit: cover; }
-        .usuarios-activos-panel { background: #1a1a1a; padding: 8px 12px; border-radius: 16px; margin-bottom: 15px; font-size: 12px; }
-        .usuario-activo-badge { display: inline-block; background: #333; margin: 4px; padding: 4px 8px; border-radius: 16px; }
         @media (max-width: 600px) { .productos-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); } }
         @media (display-mode: standalone) { body { padding-bottom: env(safe-area-inset-bottom); } .header { padding-top: env(safe-area-inset-top); } }
     </style>
@@ -91,7 +89,6 @@
     </div>
     
     <div id="tabMesas">
-        <div id="panelMeserosActivos" class="usuarios-activos-panel"></div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
             <h3 style="color:#FFD700;">🪑 Selecciona una mesa</h3>
         </div>
@@ -188,7 +185,7 @@
     let ivaPorcentaje = 16;
     let deferredPrompt;
     
-    // ID único para este dispositivo/sesión
+    // ID único para este dispositivo
     const deviceId = localStorage.getItem('deviceId') || 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     localStorage.setItem('deviceId', deviceId);
     
@@ -202,7 +199,6 @@
         });
     }
     
-    // Preview de imagen al seleccionar
     document.addEventListener("DOMContentLoaded", () => {
         const imgInput = document.getElementById("imgProducto");
         if (imgInput) {
@@ -245,32 +241,7 @@
     
     // ==================== SINCRONIZACIÓN EN TIEMPO REAL ====================
     
-    // Guardar todo en Firebase y local
-    async function guardarTodo() {
-        localStorage.setItem("productos", JSON.stringify(productos));
-        localStorage.setItem("categorias", JSON.stringify(categorias));
-        localStorage.setItem("mesas", JSON.stringify(mesas));
-        localStorage.setItem("meseros", JSON.stringify(meseros));
-        localStorage.setItem("ventas", JSON.stringify(ventas));
-        localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
-        localStorage.setItem("config_iva", ivaPorcentaje);
-        
-        // Guardar consumos de cada mesa
-        for (const mesa of mesas) {
-            let consumo = JSON.parse(localStorage.getItem(`consumo_mesa_${mesa.id}`) || "[]");
-            await db.ref(`consumos/${mesa.id}`).set(consumo);
-        }
-        
-        // Guardar datos principales en Firebase
-        await db.ref('productos').set(productos);
-        await db.ref('categorias').set(categorias);
-        await db.ref('mesas').set(mesas);
-        await db.ref('meseros').set(meseros);
-        await db.ref('ventas').set(ventas);
-        await db.ref('pedidos_pendientes').set(pedidosPendientes);
-    }
-    
-    // ESCUCHAR cambios de OTROS dispositivos y actualizar localmente
+    // INICIAR escucha de cambios en Firebase
     function iniciarSincronizacion() {
         // Escuchar productos
         db.ref('productos').on('value', (snapshot) => {
@@ -280,7 +251,7 @@
                 renderProductosMesero();
                 renderListaProductosAdmin();
                 actualizarDashboard();
-                mostrarToast("🔄 Productos sincronizados");
+                console.log("🔄 Productos sincronizados");
             }
         });
         
@@ -301,7 +272,7 @@
                 localStorage.setItem("mesas", JSON.stringify(mesas));
                 renderMesas();
                 renderListaMesasAdmin();
-                mostrarToast("🔄 Mesas sincronizadas");
+                console.log("🔄 Mesas sincronizadas");
             }
         });
         
@@ -324,40 +295,60 @@
             }
         });
         
-        // Escuchar pedidos pendientes
+        // Escuchar pedidos pendientes (¡IMPORTANTE PARA COCINA!)
         db.ref('pedidos_pendientes').on('value', (snapshot) => {
             if (snapshot.val()) {
-                pedidosPendientes = snapshot.val();
+                pedidosPendientes = Object.values(snapshot.val());
                 localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
                 renderPedidosCocina();
-                mostrarToast("🆕 Nuevo pedido recibido");
+                // Notificar a la tablet de cocina
+                if (document.getElementById("tabCocina").style.display !== "none") {
+                    mostrarToast("🆕 Nuevo pedido recibido en cocina");
+                }
+                console.log("🔄 Pedidos sincronizados:", pedidosPendientes.length);
             }
         });
         
         // Escuchar consumos de mesas (cuando otro mesero agrega productos)
-        db.ref('consumos').on('child_changed', (snapshot) => {
-            const mesaId = parseInt(snapshot.key);
-            const consumo = snapshot.val();
-            if (consumo) {
-                localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(consumo));
-                if (mesaSeleccionada === mesaId) {
-                    consumoActual = consumo;
-                    renderConsumo();
+        db.ref('consumos').on('value', (snapshot) => {
+            const todosConsumos = snapshot.val() || {};
+            for (let mesaId in todosConsumos) {
+                const consumo = todosConsumos[mesaId];
+                if (consumo && consumo.items) {
+                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(consumo.items));
+                    if (mesaSeleccionada === parseInt(mesaId)) {
+                        consumoActual = consumo.items;
+                        renderConsumo();
+                    }
                 }
-                renderMesas();
-                mostrarToast(`🔄 Mesa ${mesaId} actualizada por otro mesero`);
             }
+            renderMesas();
+            console.log("🔄 Consumos sincronizados");
         });
-        
-        // Escuchar nuevos consumos
-        db.ref('consumos').on('child_added', (snapshot) => {
-            const mesaId = parseInt(snapshot.key);
-            const consumo = snapshot.val();
-            if (consumo) {
-                localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(consumo));
-                renderMesas();
+    }
+    
+    // Guardar TODO en Firebase (para sincronizar entre dispositivos)
+    async function guardarEnFirebase() {
+        try {
+            await db.ref('productos').set(productos);
+            await db.ref('categorias').set(categorias);
+            await db.ref('mesas').set(mesas);
+            await db.ref('meseros').set(meseros);
+            await db.ref('ventas').set(ventas);
+            await db.ref('pedidos_pendientes').set(pedidosPendientes);
+            
+            // Guardar consumo de cada mesa
+            for (const mesa of mesas) {
+                const consumo = JSON.parse(localStorage.getItem(`consumo_mesa_${mesa.id}`) || "[]");
+                await db.ref(`consumos/${mesa.id}`).set({ items: consumo, actualizado: Date.now() });
             }
-        });
+            console.log("✅ Datos guardados en Firebase");
+            return true;
+        } catch (error) {
+            console.error("Error guardando en Firebase:", error);
+            mostrarToast("⚠️ Sin conexión - guardando localmente");
+            return false;
+        }
     }
     
     // Cargar datos iniciales desde Firebase
@@ -379,9 +370,9 @@
             mesas = mesasSnap.val() || [];
             meseros = meserosSnap.val() || [];
             ventas = ventasSnap.val() || [];
-            pedidosPendientes = pedidosSnap.val() || [];
+            pedidosPendientes = pedidosSnap.val() ? Object.values(pedidosSnap.val()) : [];
             
-            // Si no hay datos en Firebase, usar datos por defecto
+            // Si no hay datos en Firebase, crear datos por defecto
             if (productos.length === 0) {
                 productos = [
                     {id:1, categoria:"Sashimi", nombre:"Salmón", precio:120, costo:80, stock:20},
@@ -413,7 +404,7 @@
                 await db.ref('meseros').set(meseros);
             }
             
-            // Guardar en localStorage
+            // Guardar en localStorage como respaldo
             localStorage.setItem("productos", JSON.stringify(productos));
             localStorage.setItem("categorias", JSON.stringify(categorias));
             localStorage.setItem("mesas", JSON.stringify(mesas));
@@ -421,20 +412,21 @@
             localStorage.setItem("ventas", JSON.stringify(ventas));
             localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
             
-            // Cargar consumos de cada mesa
-            for (const mesa of mesas) {
-                const consumoSnap = await db.ref(`consumos/${mesa.id}`).once('value');
-                if (consumoSnap.val()) {
-                    localStorage.setItem(`consumo_mesa_${mesa.id}`, JSON.stringify(consumoSnap.val()));
+            // Cargar consumos
+            const consumosSnap = await db.ref('consumos').once('value');
+            const todosConsumos = consumosSnap.val() || {};
+            for (let mesaId in todosConsumos) {
+                if (todosConsumos[mesaId] && todosConsumos[mesaId].items) {
+                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(todosConsumos[mesaId].items));
                 } else {
-                    localStorage.setItem(`consumo_mesa_${mesa.id}`, JSON.stringify([]));
+                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify([]));
                 }
             }
             
         } catch (error) {
             console.error("Error cargando desde Firebase:", error);
-            mostrarToast("⚠️ Usando datos locales - sin conexión");
-            // Cargar desde localStorage como respaldo
+            mostrarToast("⚠️ Usando datos locales");
+            // Cargar desde localStorage
             productos = JSON.parse(localStorage.getItem("productos") || "[]");
             categorias = JSON.parse(localStorage.getItem("categorias") || "[]");
             mesas = JSON.parse(localStorage.getItem("mesas") || "[]");
@@ -455,52 +447,6 @@
         
         mostrarToast("✅ Datos sincronizados");
     }
-    
-    // ==================== MESEROS ACTIVOS (visible para todos) ====================
-    
-    // Actualizar qué mesa está viendo este mesero
-    function actualizarMiEstadoEnMesa() {
-        if (!meseroActual || !mesaSeleccionada) return;
-        
-        const miEstado = {
-            nombre: meseroActual.nombre,
-            mesaId: mesaSeleccionada,
-            mesaNombre: mesas.find(m => m.id === mesaSeleccionada)?.nombre || "Mesa",
-            ultimaActividad: firebase.database.ServerValue.TIMESTAMP
-        };
-        db.ref(`meseros_activos/${deviceId}`).set(miEstado);
-    }
-    
-    // Escuchar qué meseros están activos y en qué mesas
-    function escucharEstadoDeOtrosMeseros() {
-        db.ref('meseros_activos').on('value', (snapshot) => {
-            const meserosActivos = snapshot.val() || {};
-            const ahora = Date.now();
-            
-            let html = '👥 <strong>Meseros activos:</strong> ';
-            let hayActivos = false;
-            
-            for (let id in meserosActivos) {
-                const m = meserosActivos[id];
-                if (ahora - (m.ultimaActividad || 0) < 30000) {
-                    html += `<span class="usuario-activo-badge">👨‍🍳 ${m.nombre} → 🪑 ${m.mesaNombre}</span>`;
-                    hayActivos = true;
-                }
-            }
-            
-            if (!hayActivos) {
-                html += '<span class="usuario-activo-badge">📱 Solo tú</span>';
-            }
-            
-            const panel = document.getElementById("panelMeserosActivos");
-            if (panel) panel.innerHTML = html;
-        });
-    }
-    
-    // Limpiar estado al cerrar/recargar
-    window.addEventListener('beforeunload', () => {
-        db.ref(`meseros_activos/${deviceId}`).remove();
-    });
     
     // ==================== CONEXIÓN IMPRESORAS ====================
     async function conectarCocina() {
@@ -545,14 +491,26 @@
     
     async function imprimirCocina(texto) {
         if (!impresoraCocina) { mostrarToast("❌ Impresora de COCINA no conectada"); return false; }
-        try { await impresoraCocina.writeValue(new TextEncoder().encode(texto + "\n\n\n\n")); return true; } 
-        catch (error) { mostrarToast("❌ Error impresión: " + error.message); return false; }
+        try { 
+            await impresoraCocina.writeValue(new TextEncoder().encode(texto + "\n\n\n\n")); 
+            mostrarToast("🖨️ Ticket enviado a COCINA");
+            return true; 
+        } catch (error) { 
+            mostrarToast("❌ Error impresión: " + error.message); 
+            return false; 
+        }
     }
     
     async function imprimirCaja(texto) {
         if (!impresoraCaja) { mostrarToast("❌ Impresora de CAJA no conectada"); return false; }
-        try { await impresoraCaja.writeValue(new TextEncoder().encode(texto + "\n\n\n\n")); return true; } 
-        catch (error) { mostrarToast("❌ Error impresión: " + error.message); return false; }
+        try { 
+            await impresoraCaja.writeValue(new TextEncoder().encode(texto + "\n\n\n\n")); 
+            mostrarToast("🖨️ Ticket enviado a CAJA");
+            return true; 
+        } catch (error) { 
+            mostrarToast("❌ Error impresión: " + error.message); 
+            return false; 
+        }
     }
     
     // ==================== FUNCIONES PRINCIPALES ====================
@@ -565,12 +523,6 @@
             document.getElementById("loginModal").style.display = "none";
             document.getElementById("screenMain").classList.add("active");
             document.getElementById("usuarioActual").innerHTML = `👨‍🍳 ${user.nombre}`;
-            
-            // Limpiar estado anterior
-            db.ref(`meseros_activos/${deviceId}`).remove();
-            escucharEstadoDeOtrosMeseros();
-            if (mesaSeleccionada) actualizarMiEstadoEnMesa();
-            
             mostrarToast(`✅ Bienvenido ${user.nombre} - Sistema sincronizado`);
         } else { mostrarToast("❌ Usuario o PIN incorrecto"); }
     }
@@ -599,8 +551,6 @@
         document.getElementById("panelPedido").style.display = "block";
         carrito = [];
         renderCarrito();
-        
-        if (meseroActual) actualizarMiEstadoEnMesa();
     }
     
     function renderConsumo() {
@@ -622,7 +572,7 @@
     async function eliminarItemConsumo(idx) {
         consumoActual.splice(idx, 1);
         localStorage.setItem(`consumo_mesa_${mesaSeleccionada}`, JSON.stringify(consumoActual));
-        await db.ref(`consumos/${mesaSeleccionada}`).set(consumoActual);
+        await db.ref(`consumos/${mesaSeleccionada}`).set({ items: consumoActual, actualizado: Date.now() });
         renderConsumo();
         renderMesas();
     }
@@ -718,6 +668,7 @@
         if(carrito.length === 0) { mostrarToast("❌ Agrega productos"); return; }
         if(!meseroActual) { mostrarToast("❌ No hay mesero logueado"); return; }
         
+        // Verificar stock
         for(let item of carrito) {
             let prod = productos.find(p => p.id === item.id);
             if(!prod || prod.stock < item.cantidad) {
@@ -726,6 +677,7 @@
             }
         }
         
+        // Actualizar stock
         for(let item of carrito) {
             let prod = productos.find(p => p.id === item.id);
             if(prod) prod.stock -= item.cantidad;
@@ -742,28 +694,42 @@
             timestamp: Date.now()
         };
         
-        pedidosPendientes.push(nuevoPedido);
-        
+        // Agregar al consumo de la mesa
         for(let item of carrito) {
             let existente = consumoActual.find(c => c.id === item.id && c.nota === item.nota);
-            if(existente) existente.cantidad += item.cantidad;
-            else consumoActual.push({ 
-                id: item.id, nombre: item.nombre, precio: item.precio, 
-                costo: item.costo, cantidad: item.cantidad, nota: item.nota || "",
-                agregadoPor: meseroActual.nombre
-            });
+            if(existente) {
+                existente.cantidad += item.cantidad;
+            } else {
+                consumoActual.push({ 
+                    id: item.id, nombre: item.nombre, precio: item.precio, 
+                    costo: item.costo, cantidad: item.cantidad, nota: item.nota || "",
+                    agregadoPor: meseroActual.nombre
+                });
+            }
         }
         
+        // Guardar en Firebase (esto sincroniza con TODOS los dispositivos)
+        pedidosPendientes.push(nuevoPedido);
+        await db.ref('pedidos_pendientes').set(pedidosPendientes);
+        await db.ref('productos').set(productos);
+        await db.ref(`consumos/${mesaSeleccionada}`).set({ items: consumoActual, actualizado: Date.now() });
+        
         localStorage.setItem(`consumo_mesa_${mesaSeleccionada}`, JSON.stringify(consumoActual));
-        await guardarTodo();
-        await imprimirCocina(generarTicketCocina(nuevoPedido));
+        localStorage.setItem("productos", JSON.stringify(productos));
+        localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
+        
+        // Imprimir ticket en cocina
+        let ticket = generarTicketCocina(nuevoPedido);
+        await imprimirCocina(ticket);
         
         renderConsumo();
         renderProductosMesero();
         renderPedidosCocina();
         renderMesas();
+        
         carrito = [];
         renderCarrito();
+        
         mostrarToast(`✅ Pedido enviado a cocina - Mesa ${nuevoPedido.mesaNombre} por ${meseroActual.nombre}`);
     }
     
@@ -771,7 +737,7 @@
         let cont = document.getElementById("pedidosCocina");
         if(!cont) return;
         if(!pedidosPendientes || pedidosPendientes.length === 0) cont.innerHTML = '<div style="padding:40px; text-align:center; color:#888;">✅ No hay pedidos pendientes</div>';
-        else cont.innerHTML = Object.values(pedidosPendientes).map(p => `
+        else cont.innerHTML = pedidosPendientes.map(p => `
             <div class="admin-card pedido-pendiente">
                 <div style="display:flex; justify-content:space-between; flex-wrap:wrap;">
                     <div><strong style="color:#FFD700;">🍽️ ${p.mesaNombre}</strong> | ${p.hora} | 👨‍🍳 ${p.mesero}</div>
@@ -784,7 +750,8 @@
     
     async function completarPedido(id) {
         pedidosPendientes = pedidosPendientes.filter(p => p.id !== id);
-        await guardarTodo();
+        await db.ref('pedidos_pendientes').set(pedidosPendientes);
+        localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
         renderPedidosCocina();
         mostrarToast("✅ Pedido completado");
     }
@@ -826,8 +793,11 @@
         await imprimirCaja(generarTicketCliente(venta, mesaNombre, metodo));
         
         ventas.push(venta);
+        await db.ref('ventas').set(ventas);
+        await db.ref(`consumos/${mesaSeleccionada}`).remove();
+        
         localStorage.removeItem(`consumo_mesa_${mesaSeleccionada}`);
-        await guardarTodo();
+        localStorage.setItem("ventas", JSON.stringify(ventas));
         
         consumoActual = [];
         mesaSeleccionada = null;
@@ -881,7 +851,7 @@
         if(nom) { 
             let newId = mesas.length ? Math.max(...mesas.map(m=>m.id)) + 1 : 1; 
             mesas.push({ id: newId, nombre: nom }); 
-            guardarTodo(); 
+            guardarEnFirebase(); 
             renderListaMesasAdmin(); 
             renderMesas(); 
             document.getElementById("nuevaMesa").value = ""; 
@@ -891,7 +861,7 @@
     
     function eliminarMesa(id) { 
         mesas = mesas.filter(m => m.id !== id); 
-        guardarTodo(); 
+        guardarEnFirebase(); 
         renderListaMesasAdmin(); 
         renderMesas(); 
         if(mesaSeleccionada === id) { 
@@ -911,7 +881,7 @@
         if(!nom || !pin || pin.length !== 4) { mostrarToast("❌ Nombre y PIN de 4 dígitos"); return; } 
         if(meseros.find(m => m.nombre === nom)) { mostrarToast("❌ Ya existe"); return; } 
         meseros.push({ nombre: nom, pin }); 
-        guardarTodo(); 
+        guardarEnFirebase(); 
         renderListaMeserosAdmin(); 
         document.getElementById("nuevoMesero").value = ""; 
         document.getElementById("nuevoPin").value = ""; 
@@ -924,7 +894,7 @@
             document.getElementById("usuarioActual").innerHTML = ""; 
         } 
         meseros.splice(i,1); 
-        guardarTodo(); 
+        guardarEnFirebase(); 
         renderListaMeserosAdmin(); 
     }
     
@@ -939,7 +909,7 @@
         let cat = document.getElementById("nuevaCat").value.trim(); 
         if(!cat || categorias.includes(cat)) { mostrarToast("❌ Categoría inválida"); return; } 
         categorias.push(cat); 
-        guardarTodo(); 
+        guardarEnFirebase(); 
         renderListaCategoriasAdmin(); 
         renderCategoriasMesero(); 
         document.getElementById("nuevaCat").value = ""; 
@@ -948,7 +918,7 @@
     
     function eliminarCategoriaAdmin(i) { 
         categorias.splice(i,1); 
-        guardarTodo(); 
+        guardarEnFirebase(); 
         renderListaCategoriasAdmin(); 
         renderCategoriasMesero(); 
     }
@@ -985,7 +955,7 @@
             imagen: imagenBase64 
         }); 
         
-        await guardarTodo(); 
+        await guardarEnFirebase(); 
         renderListaProductosAdmin(); 
         renderProductosMesero(); 
         
@@ -1022,7 +992,7 @@
     
     function eliminarProductoAdmin(id) { 
         productos = productos.filter(p => p.id !== id); 
-        guardarTodo(); 
+        guardarEnFirebase(); 
         renderListaProductosAdmin(); 
         renderProductosMesero(); 
     }
@@ -1034,7 +1004,7 @@
         localStorage.setItem("config_iva", ivaPorcentaje); 
         document.getElementById("nombreNegocio").innerText = nombre || "AppInc POS"; 
         mostrarToast("✓ Configuración guardada"); 
-        guardarTodo(); 
+        guardarEnFirebase(); 
     }
     
     function cargarConfiguracion() { 
@@ -1055,10 +1025,11 @@
     }
     
     // ==================== INICIALIZAR ====================
-    cargarDatosIniciales().then(() => {
+    (async function init() {
+        await cargarDatosIniciales();
         iniciarSincronizacion();
         setTimeout(() => { document.getElementById("loginModal").style.display = "flex"; }, 500);
-    });
+    })();
 </script>
 </body>
 </html>
