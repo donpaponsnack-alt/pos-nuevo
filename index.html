@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>AppInc POS - Sincronizado</title>
+    <link rel="manifest" href="data:application/manifest+json,{%22name%22:%22AppInc%20POS%22,%22short_name%22:%22AppInc%20POS%22,%22description%22:%22Sistema%20POS%20para%20restaurante%22,%22start_url%22:%22/%22,%22display%22:%22standalone%22,%22theme_color%22:%22#8B0000%22,%22background_color%22:%22#0a0a0a%22,%22orientation%22:%22portrait%22,%22icons%22:[{%22src%22:%22data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%238B0000'/%3E%3Ctext x='50' y='67' font-size='50' text-anchor='middle' fill='%23FFD700'%3E📱%3C/text%3E%3C/svg%3E%22,%22sizes%22:%22any%22,%22type%22:%22image/svg+xml%22,%22purpose%22:%22any%22}]}">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AppInc POS">
+    <meta name="theme-color" content="#8B0000">
+    
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 100%); min-height: 100vh; color: white; padding-bottom: 60px; }
+        .header { background: linear-gradient(135deg, #1a0000 0%, #2d0000 100%); border-bottom: 3px solid #FFD700; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; position: sticky; top: 0; z-index: 100; }
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo h1 { font-size: 1.3rem; color: #FFD700; font-weight: 800; }
+        .btn-icon { background: #FFD700; border: none; padding: 8px 20px; border-radius: 30px; color: #1a0000; cursor: pointer; font-weight: 700; }
+        .btn-primary { background: #8B0000; border: none; padding: 14px; border-radius: 50px; color: #FFD700; font-weight: 800; width: 100%; cursor: pointer; }
+        .btn-secondary { background: #333; border: none; padding: 10px 20px; border-radius: 40px; cursor: pointer; font-weight: 600; color: white; }
+        .btn-bluetooth-cocina { background: #0088cc; border: none; padding: 8px 12px; border-radius: 30px; color: white; cursor: pointer; font-weight: 600; margin-left: 5px; font-size: 12px; }
+        .btn-bluetooth-caja { background: #27ae60; border: none; padding: 8px 12px; border-radius: 30px; color: white; cursor: pointer; font-weight: 600; margin-left: 5px; font-size: 12px; }
+        .screen { display: none; padding: 20px; animation: fadeIn 0.3s; min-height: calc(100vh - 80px); }
+        .screen.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .tabs { display: flex; gap: 5px; background: #1a1a1a; padding: 8px; border-radius: 60px; margin-bottom: 20px; flex-wrap: wrap; }
+        .tab-btn { background: transparent; border: none; padding: 10px 20px; border-radius: 50px; color: white; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+        .tab-btn.active { background: #FFD700; color: #1a0000; }
+        .mesas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 14px; margin-bottom: 20px; }
+        .mesa-card { background: #1a1a1a; border-radius: 20px; padding: 14px; text-align: center; cursor: pointer; border: 2px solid #333; transition: all 0.2s; position: relative; }
+        .mesa-card.seleccionada { background: #8B0000; border-color: #FFD700; }
+        .mesa-card.ocupada { border-left: 6px solid #FFD700; }
+        .mesa-card .mesero-badge { font-size: 0.6rem; background: #333; padding: 2px 6px; border-radius: 10px; position: absolute; top: 5px; right: 5px; }
+        .productos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; max-height: 45vh; overflow-y: auto; padding: 5px; }
+        .producto-card { background: #1a1a1a; border-radius: 20px; padding: 12px; text-align: center; cursor: pointer; border: 1px solid #333; transition: all 0.2s; }
+        .producto-card:hover { transform: translateY(-3px); border-color: #FFD700; background: #2a1a1a; }
+        .carrito-container { background: #1a1a1a; border-radius: 20px; padding: 20px; margin-top: 20px; }
+        .carrito-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #333; flex-wrap: wrap; gap: 8px; }
+        .cantidad-control { display: flex; align-items: center; gap: 8px; }
+        .cantidad-control button { background: #8B0000; border: none; width: 30px; height: 30px; border-radius: 10px; color: white; cursor: pointer; font-weight: bold; }
+        .admin-panel { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0a0a0a; z-index: 3000; overflow-y: auto; padding: 20px; display: none; }
+        .admin-card { background: #1a1a1a; border-radius: 20px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 12px; }
+        .stat-card { background: #0a0a0a; padding: 15px; border-radius: 16px; text-align: center; }
+        .stat-number { font-size: 1.5rem; font-weight: 800; color: #FFD700; }
+        .input-dark { background: #0a0a0a; border: 1px solid #333; color: white; padding: 12px; border-radius: 20px; width: 100%; margin-bottom: 10px; }
+        .input-dark:focus { outline: none; border-color: #FFD700; }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); display: none; justify-content: center; align-items: center; z-index: 4000; }
+        .modal-content { background: #1a1a1a; padding: 30px; border-radius: 30px; max-width: 400px; width: 90%; text-align: center; border: 1px solid #FFD700; }
+        .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: #27ae60; color: white; padding: 12px 24px; border-radius: 50px; z-index: 5000; display: none; font-weight: 600; }
+        .bluetooth-status { position: fixed; bottom: 10px; left: 10px; background: #333; padding: 5px 12px; border-radius: 20px; font-size: 11px; z-index: 1000; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+        .bluetooth-status .status-line { font-size: 10px; }
+        .bluetooth-status .cocina-on { color: #00aaff; }
+        .bluetooth-status .caja-on { color: #2ecc71; }
+        .bluetooth-status .off { color: #ff4444; }
+        .pedido-pendiente { border-left: 4px solid #FFD700; margin-bottom: 15px; }
+        .sync-status { position: fixed; bottom: 10px; right: 10px; padding: 5px 12px; border-radius: 20px; font-size: 10px; z-index: 1000; }
+        .sync-status.online { background: #27ae60; }
+        .sync-status.offline { background: #ef4444; }
+        .usuarios-activos { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; font-size: 10px; }
+        .usuario-activo { background: #27ae60; padding: 2px 8px; border-radius: 15px; }
+        .notification-badge { position: absolute; top: -5px; right: -5px; background: #ef4444; color: white; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; display: flex; align-items: center; justify-content: center; }
+        .install-banner { position: fixed; bottom: 70px; left: 20px; right: 20px; background: #1a1a1a; border: 1px solid #FFD700; border-radius: 20px; padding: 15px; display: none; align-items: center; justify-content: space-between; z-index: 2000; backdrop-filter: blur(10px); }
+        .install-banner button { background: #FFD700; border: none; padding: 8px 20px; border-radius: 30px; color: #1a0000; font-weight: bold; cursor: pointer; }
+        @media (max-width: 600px) { .productos-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); } }
+        @media (display-mode: standalone) { body { padding-bottom: env(safe-area-inset-bottom); } .header { padding-top: env(safe-area-inset-top); } }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="logo"><h1 id="nombreNegocio">AppInc POS</h1></div>
+    <div>
+        <span id="usuarioActual" style="background:#8B0000; padding:5px 12px; border-radius:30px; margin-right:10px;"></span>
+        <button class="btn-icon" onclick="abrirAdmin()">⚙️ Admin</button>
+        <button class="btn-bluetooth-cocina" onclick="conectarCocina()">🍳 Conectar Cocina</button>
+        <button class="btn-bluetooth-caja" onclick="conectarCaja()">💰 Conectar Caja</button>
+    </div>
+</div>
+
+<div id="installBanner" class="install-banner"><span>📱 Instalar como app</span><button id="btnInstall">Instalar</button></div>
+
+<div id="screenMain" class="screen">
+    <div class="tabs">
+        <button class="tab-btn active" onclick="cambiarTab('mesas')">🪑 Mesas</button>
+        <button class="tab-btn" onclick="cambiarTab('cocina')">👨‍🍳 Cocina</button>
+        <button class="tab-btn" onclick="cambiarTab('ventas')">💰 Ventas</button>
+    </div>
+    
+    <div id="tabMesas">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+            <h3 style="color:#FFD700;">🪑 Selecciona una mesa</h3>
+            <div id="usuariosOnline" class="usuarios-activos"></div>
+        </div>
+        <div id="mesasGrid" class="mesas-grid"></div>
+        
+        <div id="panelPedido" style="display:none;">
+            <div class="carrito-container">
+                <h3 style="color:#FFD700;">🍽️ Consumo - Mesa <span id="mesaNombre">?</span></h3>
+                <div id="consumoLista"></div>
+                <div id="consumoTotal" style="text-align:right; margin-top:10px; font-size:1.2rem; color:#FFD700;"></div>
+                <button class="btn-secondary" onclick="cobrarMesa()" style="background:#27ae60; margin-top:10px;">💰 COBRAR MESA</button>
+            </div>
+            
+            <div class="carrito-container">
+                <h3 style="color:#FFD700;">➕ Agregar productos</h3>
+                <input type="text" id="buscadorProd" class="input-dark" placeholder="🔍 Buscar..." onkeyup="filtrarProductosMesero()" style="margin-bottom:15px;">
+                <div id="categoriasMesero" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:15px;"></div>
+                <div id="productosMesero" class="productos-grid"></div>
+                
+                <h3 style="color:#FFD700; margin-top:20px;">🛒 Nuevo pedido</h3>
+                <div id="carritoLista"></div>
+                <div style="text-align:right; font-size:1.3rem; margin:15px 0; color:#FFD700;"><strong id="totalPedido">$0</strong></div>
+                <button class="btn-primary" onclick="enviarPedido()">👨‍🍳 ENVIAR A COCINA</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="tabCocina" style="display:none;">
+        <h3 style="color:#FFD700;">👨‍🍳 Pedidos pendientes</h3>
+        <div id="pedidosCocina"></div>
+    </div>
+    
+    <div id="tabVentas" style="display:none;">
+        <h3 style="color:#FFD700;">💰 Historial de Ventas</h3>
+        <div id="ventasLista"></div>
+    </div>
+</div>
+
+<div id="loginModal" class="modal">
+    <div class="modal-content">
+        <h2>👨‍🍳 Login Mesero</h2>
+        <input type="text" id="loginNombre" class="input-dark" placeholder="Nombre">
+        <input type="password" id="loginPin" class="input-dark" placeholder="PIN" maxlength="4">
+        <button class="btn-primary" onclick="loginMesero()">Ingresar</button>
+        <p style="margin-top:15px; font-size:12px; color:#888;">Usuarios: Juan (1111), Ana (2222), Carlos (3333)</p>
+    </div>
+</div>
+
+<div id="adminPanel" class="admin-panel">
+    <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+        <h2 style="color:#FFD700;">⚙️ Administración</h2>
+        <button class="btn-secondary" onclick="cerrarAdmin()">Cerrar</button>
+    </div>
+    <div class="admin-card"><h3>📊 Dashboard</h3><div class="stats-grid" id="statsGrid"></div></div>
+    <div class="admin-card"><h3>🪑 Mesas</h3><div style="display:flex; gap:10px;"><input type="text" id="nuevaMesa" class="input-dark" placeholder="Nombre"><button class="btn-primary" onclick="agregarMesa()" style="width:auto;">+</button></div><div id="listaMesas"></div></div>
+    <div class="admin-card"><h3>👨‍🍳 Meseros</h3><div style="display:flex; gap:10px;"><input type="text" id="nuevoMesero" class="input-dark" placeholder="Nombre"><input type="password" id="nuevoPin" class="input-dark" placeholder="PIN" maxlength="4" style="width:80px;"><button class="btn-primary" onclick="agregarMeseroAdmin()" style="width:auto;">+</button></div><div id="listaMeserosAdmin"></div></div>
+    <div class="admin-card"><h3>📂 Categorías</h3><div style="display:flex; gap:10px;"><input type="text" id="nuevaCat" class="input-dark" placeholder="Nueva"><button class="btn-primary" onclick="agregarCategoriaAdmin()" style="width:auto;">+</button></div><div id="listaCategorias"></div></div>
+    <div class="admin-card"><h3>🍣 Productos</h3><select id="catProducto" class="input-dark"></select><input type="text" id="nomProducto" class="input-dark" placeholder="Nombre"><input type="number" id="precioProducto" class="input-dark" placeholder="Precio"><input type="number" id="costoProducto" class="input-dark" placeholder="Costo"><input type="number" id="stockProducto" class="input-dark" placeholder="Stock"><textarea id="descProducto" class="input-dark" rows="2" placeholder="Descripción"></textarea><input type="file" id="imgProducto" accept="image/*"><div id="newImagenPreview"></div><button class="btn-primary" onclick="agregarProductoAdmin()">Guardar</button><div id="listaProductos" style="margin-top:20px; max-height:300px; overflow-y:auto;"></div></div>
+    <div class="admin-card"><h3>⚙️ Configuración</h3><input type="text" id="editNombreNegocio" class="input-dark" placeholder="Nombre negocio"><input type="file" id="editLogo" accept="image/*"><div id="logoPreview"></div><select id="configIva" class="input-dark"><option value="0">0% IVA</option><option value="8">8% IVA</option><option value="16" selected>16% IVA</option></select><button class="btn-primary" onclick="guardarConfiguracion()">Guardar</button></div>
+</div>
+
+<div id="toast" class="toast"></div>
+<div id="modalPago" class="modal"><div class="modal-content"><h2>💵 Pago</h2><p id="modalTotal" style="font-size:1.5rem;"></p><button class="btn-primary" onclick="pagarEfectivo()" style="margin:5px;">Efectivo</button><button class="btn-primary" onclick="pagarQR()" style="margin:5px;">QR</button><button class="btn-secondary" onclick="cerrarModalPago()">Cancelar</button></div></div>
+<div id="modalQR" class="modal"><div class="modal-content"><div id="qrContainer"></div><button class="btn-secondary" onclick="cerrarModalQR()">Cerrar</button></div></div>
+<div id="bluetoothStatus" class="bluetooth-status">
+    <div class="status-line">🍳 Cocina: <span id="statusCocina" class="off">🔴 Desconectada</span></div>
+    <div class="status-line">💰 Caja: <span id="statusCaja" class="off">🔴 Desconectada</span></div>
+</div>
+<div id="syncStatus" class="sync-status online">🟢 Sincronizado</div>
+
+<script>
+    // ==================== CONFIGURACIÓN FIREBASE ====================
+    const firebaseConfig = {
+        apiKey: "AIzaSyATPZjP_kGkWY2CyPlN8SLEN3__8opuVCs",
+        authDomain: "appinc-pos.firebaseapp.com",
+        projectId: "appinc-pos",
+        storageBucket: "appinc-pos.firebasestorage.app",
+        messagingSenderId: "907358503102",
+        appId: "1:907358503102:web:b673177a10cfd90dff5eef",
+        measurementId: "G-YJTP5JLDYZ"
+    };
+    
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.database();
+    
+    // ==================== VARIABLES ====================
+    let impresoraCocina = null;
+    let impresoraCaja = null;
+    
+    let productos = [], categorias = [], mesas = [], meseros = [], ventas = [], pedidosPendientes = [];
+    let meseroActual = null, mesaSeleccionada = null, carrito = [], consumoActual = [];
+    let ivaPorcentaje = 16;
+    let deferredPrompt;
+    let datosLocalesCargados = false;
+    let usuariosActivos = {};
+    
+    // ID único para este dispositivo/sesión
+    const deviceId = localStorage.getItem('deviceId') || 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('deviceId', deviceId);
+    
+    // ==================== PWA ====================
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        document.getElementById('installBanner').style.display = 'flex';
+    });
+    document.getElementById('btnInstall')?.addEventListener('click', async () => {
+        if(deferredPrompt) { deferredPrompt.prompt(); const { outcome } = await deferredPrompt.userChoice; if(outcome === 'accepted') document.getElementById('installBanner').style.display = 'none'; deferredPrompt = null; }
+    });
+    
+    function mostrarToast(msg) { 
+        let t = document.getElementById("toast"); 
+        t.innerText = msg; 
+        t.style.display = "block"; 
+        setTimeout(() => t.style.display = "none", 2500); 
+    }
+    
+    // ==================== SINCRONIZACIÓN EN TIEMPO REAL ====================
+    
+    // 1. Registrar usuario activo
+    function registrarUsuarioActivo() {
+        if (!meseroActual) return;
+        
+        const userRef = db.ref(`usuarios_activos/${deviceId}`);
+        userRef.set({
+            nombre: meseroActual.nombre,
+            dispositivo: deviceId,
+            ultimaActividad: firebase.database.ServerValue.TIMESTAMP,
+            mesaActiva: mesaSeleccionada
+        });
+        
+        // Al cerrar sesión o cerrar navegador, eliminar registro
+        window.addEventListener('beforeunload', () => {
+            userRef.remove();
+        });
+        
+        // Actualizar cada 30 segundos
+        setInterval(() => {
+            if (meseroActual) {
+                userRef.update({
+                    ultimaActividad: firebase.database.ServerValue.TIMESTAMP,
+                    mesaActiva: mesaSeleccionada
+                });
+            }
+        }, 30000);
+    }
+    
+    // 2. Escuchar usuarios activos
+    function escucharUsuariosActivos() {
+        db.ref('usuarios_activos').on('value', (snapshot) => {
+            const usuarios = snapshot.val() || {};
+            usuariosActivos = usuarios;
+            
+            const ahora = Date.now();
+            const activos = Object.values(usuarios).filter(u => (ahora - (u.ultimaActividad || 0)) < 60000);
+            
+            const container = document.getElementById("usuariosOnline");
+            if (container && activos.length > 0) {
+                container.innerHTML = activos.map(u => `<span class="usuario-activo">👨‍🍳 ${u.nombre}</span>`).join('');
+            } else if (container) {
+                container.innerHTML = '<span style="font-size:10px;">📱 Solo tú</span>';
+            }
+        });
+    }
+    
+    // 3. Escuchar cambios en tiempo real de todas las mesas
+    function escucharCambiosTiempoReal() {
+        // Escuchar cambios en pedidos pendientes (cocina)
+        db.ref('pedidos_pendientes').on('value', (snapshot) => {
+            if (snapshot.val() && datosLocalesCargados) {
+                const nuevosPedidos = snapshot.val();
+                // Detectar nuevos pedidos para notificar
+                if (pedidosPendientes.length > 0 && nuevosPedidos.length > pedidosPendientes.length) {
+                    const nuevos = nuevosPedidos.filter(n => !pedidosPendientes.some(p => p.id === n.id));
+                    if (nuevos.length > 0) {
+                        nuevos.forEach(p => {
+                            mostrarToast(`🆕 Nuevo pedido - Mesa ${p.mesaNombre} por ${p.mesero}`);
+                            // Reproducir sonido si está en la pestaña de cocina
+                            if (document.getElementById("tabCocina").style.display !== "none") {
+                                const audio = new Audio('data:audio/wav;base64,U3RlYWx0aCBzb3VuZA==');
+                                audio.play().catch(e => console.log("No se pudo reproducir sonido"));
+                            }
+                        });
+                    }
+                }
+                pedidosPendientes = nuevosPedidos;
+                renderPedidosCocina();
+            }
+        });
+        
+        // Escuchar cambios en ventas
+        db.ref('ventas').on('value', (snapshot) => {
+            if (snapshot.val() && datosLocalesCargados) {
+                ventas = snapshot.val();
+                renderVentas();
+                actualizarDashboard();
+            }
+        });
+        
+        // Escuchar cambios en productos
+        db.ref('productos').on('value', (snapshot) => {
+            if (snapshot.val() && datosLocalesCargados) {
+                productos = snapshot.val();
+                renderProductosMesero();
+                renderListaProductosAdmin();
+                actualizarDashboard();
+            }
+        });
+    }
+    
+    // 4. Guardar consumo de mesa sincronizado
+    async function guardarConsumoMesa(mesaId, consumo) {
+        await db.ref(`consumos/${mesaId}`).set({
+            items: consumo,
+            ultimaActualizacion: firebase.database.ServerValue.TIMESTAMP,
+            actualizadoPor: meseroActual?.nombre,
+            total: consumo.reduce((s,i) => s + (i.precio * i.cantidad), 0)
+        });
+        localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(consumo));
+    }
+    
+    // 5. Escuchar consumos de mesas en tiempo real
+    function escucharConsumosMesas() {
+        db.ref('consumos').on('child_changed', (snapshot) => {
+            if (datosLocalesCargados) {
+                const mesaId = parseInt(snapshot.key);
+                const data = snapshot.val();
+                if (data && data.items) {
+                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(data.items));
+                    if (mesaSeleccionada === mesaId) {
+                        consumoActual = data.items;
+                        renderConsumo();
+                    }
+                    renderMesas();
+                    mostrarToast(`🔄 Mesa ${mesaId} actualizada por ${data.actualizadoPor || 'otro usuario'}`);
+                }
+            }
+        });
+        
+        db.ref('consumos').on('child_added', (snapshot) => {
+            if (datosLocalesCargados) {
+                const mesaId = parseInt(snapshot.key);
+                const data = snapshot.val();
+                if (data && data.items) {
+                    localStorage.setItem(`consumo_mesa_${mesaId}`, JSON.stringify(data.items));
+                    renderMesas();
+                }
+            }
+        });
+    }
+    
+    // 6. Detectar estado de conexión
+    function monitorearConexion() {
+        const statusDiv = document.getElementById("syncStatus");
+        
+        db.ref('.info/connected').on('value', (snap) => {
+            if (snap.val() === true) {
+                statusDiv.innerHTML = "🟢 Sincronizado";
+                statusDiv.className = "sync-status online";
+                mostrarToast("✅ Conexión restablecida - Todos los dispositivos sincronizados");
+                // Sincronizar datos pendientes
+                sincronizarDatosPendientes();
+            } else {
+                statusDiv.innerHTML = "🔴 Sin conexión (modo local)";
+                statusDiv.className = "sync-status offline";
+                mostrarToast("⚠️ Sin conexión - Los cambios se guardarán localmente");
+            }
+        });
+    }
+    
+    // 7. Sincronizar datos pendientes al recuperar conexión
+    async function sincronizarDatosPendientes() {
+        // Sincronizar consumos de mesas
+        for (const mesa of mesas) {
+            const consumoLocal = JSON.parse(localStorage.getItem(`consumo_mesa_${mesa.id}`) || "[]");
+            if (consumoLocal.length > 0) {
+                await db.ref(`consumos/${mesa.id}`).set({
+                    items: consumoLocal,
+                    ultimaActualizacion: firebase.database.ServerValue.TIMESTAMP,
+                    actualizadoPor: meseroActual?.nombre
+                });
+            }
+        }
+        
+        // Sincronizar pedidos pendientes
+        const pedidosLocal = JSON.parse(localStorage.getItem("pedidos_pendientes") || "[]");
+        if (pedidosLocal.length > 0) {
+            for (const pedido of pedidosLocal) {
+                await db.ref(`pedidos_pendientes/${pedido.id}`).set(pedido);
+            }
+        }
+    }
+    
+    // ==================== CONEXIÓN IMPRESORAS ====================
+    async function conectarCocina() {
+        try {
+            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
+            mostrarToast("🔍 Buscando impresora térmica para COCINA...");
+            
+            const device = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true,
+                optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+            });
+            
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            impresoraCocina = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+            
+            if (impresoraCocina) {
+                document.getElementById("statusCocina").innerHTML = "🟢 Conectada";
+                document.getElementById("statusCocina").className = "cocina-on";
+                mostrarToast(`✅ Impresora de COCINA conectada`);
+            }
+        } catch (error) {
+            mostrarToast("❌ Error: " + error.message);
+        }
+    }
+    
+    async function conectarCaja() {
+        try {
+            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
+            mostrarToast("🔍 Buscando impresora térmica para CAJA...");
+            
+            const device = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true,
+                optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+            });
+            
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            impresoraCaja = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+            
+            if (impresoraCaja) {
+                document.getElementById("statusCaja").innerHTML = "🟢 Conectada";
+                document.getElementById("statusCaja").className = "caja-on";
+                mostrarToast(`✅ Impresora de CAJA conectada`);
+            }
+        } catch (error) {
+            mostrarToast("❌ Error: " + error.message);
+        }
+    }
+    
+    async function imprimirCocina(texto) {
+        if (!impresoraCocina) { mostrarToast("❌ Impresora de COCINA no conectada"); return false; }
+        try {
+            await impresoraCocina.writeValue(new TextEncoder().encode(texto + "\n\n\n\n"));
+            return true;
+        } catch (error) { 
+            mostrarToast("❌ Error impresión: " + error.message); 
+            return false; 
+        }
+    }
+    
+    async function imprimirCaja(texto) {
+        if (!impresoraCaja) { mostrarToast("❌ Impresora de CAJA no conectada"); return false; }
+        try {
+            await impresoraCaja.writeValue(new TextEncoder().encode(texto + "\n\n\n\n"));
+            return true;
+        } catch (error) { 
+            mostrarToast("❌ Error impresión: " + error.message); 
+            return false; 
+        }
+    }
+    
+    // ==================== FUNCIONES PRINCIPALES ====================
+    function guardarTodoLocal() {
+        localStorage.setItem("productos", JSON.stringify(productos));
+        localStorage.setItem("categorias", JSON.stringify(categorias));
+        localStorage.setItem("mesas", JSON.stringify(mesas));
+        localStorage.setItem("meseros", JSON.stringify(meseros));
+        localStorage.setItem("ventas", JSON.stringify(ventas));
+        localStorage.setItem("pedidos_pendientes", JSON.stringify(pedidosPendientes));
+        localStorage.setItem("config_iva", ivaPorcentaje);
+        
+        // También guardar en Firebase si hay conexión
+        if (navigator.onLine && datosLocalesCargados) {
+            db.ref('productos').set(productos);
+            db.ref('categorias').set(categorias);
+            db.ref('mesas').set(mesas);
+            db.ref('meseros').set(meseros);
+        }
+    }
+    
+    function cargarDatosLocales() {
+        productos = JSON.parse(localStorage.getItem("productos") || "[]");
+        categorias = JSON.parse(localStorage.getItem("categorias") || "[]");
+        mesas = JSON.parse(localStorage.getItem("mesas") || '[{"id":1,"nombre":"Mesa 1"},{"id":2,"nombre":"Mesa 2"},{"id":3,"nombre":"Mesa 3"},{"id":4,"nombre":"Mesa 4"},{"id":5,"nombre":"Mesa 5"},{"id":6,"nombre":"Mesa 6"},{"id":7,"nombre":"Mesa 7"},{"id":8,"nombre":"Mesa 8"}]');
+        meseros = JSON.parse(localStorage.getItem("meseros") || '[{"nombre":"Juan","pin":"1111"},{"nombre":"Ana","pin":"2222"},{"nombre":"Carlos","pin":"3333"}]');
+        ventas = JSON.parse(localStorage.getItem("ventas") || "[]");
+        pedidosPendientes = JSON.parse(localStorage.getItem("pedidos_pendientes") || "[]");
+        ivaPorcentaje = parseInt(localStorage.getItem("config_iva") || "16");
+        
+        if(categorias.length === 0) categorias = ["Sashimi", "Nigiri", "Rollos", "Temaki", "Bebidas"];
+        if(productos.length === 0) productos = [
+            {id:1, categoria:"Sashimi", nombre:"Salmón", precio:120, costo:80, stock:20},
+            {id:2, categoria:"Nigiri", nombre:"Anguila", precio:95, costo:60, stock:15},
+            {id:3, categoria:"Rollos", nombre:"California", precio:110, costo:70, stock:25},
+            {id:4, categoria:"Rollos", nombre:"Sushi Mango", precio:135, costo:85, stock:12}
+        ];
+        
+        cargarConfiguracion();
+        renderMesas();
+        renderCategoriasMesero();
+        renderProductosMesero();
+        renderPedidosCocina();
+        renderVentas();
+        actualizarDashboard();
+        
+        datosLocalesCargados = true;
+    }
+    
+    function loginMesero() {
+        let nombre = document.getElementById("loginNombre").value.trim();
+        let pin = document.getElementById("loginPin").value;
+        let user = meseros.find(m => m.nombre === nombre && m.pin === pin);
+        if(user) {
+            meseroActual = user;
+            document.getElementById("loginModal").style.display = "none";
+            document.getElementById("screenMain").classList.add("active");
+            document.getElementById("usuarioActual").innerHTML = `👨‍🍳 ${user.nombre}`;
+            
+            // Registrar usuario activo para sincronización
+            registrarUsuarioActivo();
+            escucharUsuariosActivos();
+            
+            mostrarToast(`✅ Bienvenido ${user.nombre} - Sistema sincronizado`);
+        } else { 
+            mostrarToast("❌ Usuario o PIN incorrecto"); 
+        }
+    }
+    
+    function renderMesas() {
+        let cont = document.getElementById("mesasGrid");
+        if(!cont) return;
+        
+        cont.innerHTML = mesas.map(m => {
+            let consumo = JSON.parse(localStorage.getItem(`consumo_mesa_${m.id}`) || "[]");
+            let total = consumo.reduce((s,i) => s + (i.precio * i.cantidad), 0);
+            
+            // Quién tiene ocupada esta mesa
+            let meseroOcupante = "";
+            if (total > 0 && consumo[0] && consumo[0].atendidoPor) {
+                meseroOcupante = `<div class="mesero-badge">👨‍🍳 ${consumo[0].atendidoPor}</div>`;
+            }
+            
+            return `<div class="mesa-card ${mesaSeleccionada === m.id ? 'seleccionada' : ''} ${total > 0 ? 'ocupada' : ''}" onclick="seleccionarMesa(${m.id})">
+                <div style="font-size:1.5rem;">🍽️</div>
+                <div><strong>${m.nombre}</strong></div>
+                <div style="font-size:0.7rem; color:#FFD700;">${total > 0 ? `$${total}` : 'Libre'}</div>
+                ${meseroOcupante}
+            </div>`;
+        }).join("");
+    }
+    
+    function seleccionarMesa(id) {
+        mesaSeleccionada = id;
+        let mesa = mesas.find(m => m.id === id);
+        document.getElementById("mesaNombre").innerText = mesa?.nombre || id;
+        
+        // Cargar consumo desde localStorage (sincronizado vía Firebase)
+        consumoActual = JSON.parse(localStorage.getItem(`consumo_mesa_${id}`) || "[]");
+        renderConsumo();
+        renderMesas();
+        document.getElementById("panelPedido").style.display = "block";
+        carrito = [];
+        renderCarrito();
+        
+        // Actualizar en Firebase que este usuario está viendo esta mesa
+        if (meseroActual) {
+            db.ref(`usuarios_activos/${deviceId}`).update({ mesaActiva: id });
+        }
+    }
+    
+    function renderConsumo() {
+        let cont = document.getElementById("consumoLista");
+        if(!cont) return;
+        let total = 0;
+        if(consumoActual.length === 0) cont.innerHTML = '<div style="padding:20px; text-align:center; color:#888;">🍽️ Sin consumo</div>';
+        else cont.innerHTML = consumoActual.map((item, idx) => {
+            total += item.precio * item.cantidad;
+            return `<div class="carrito-item">
+                <div><strong>${item.cantidad}x</strong> ${item.nombre} ${item.nota ? `📝 ${item.nota}` : ''}<br><small style="color:#888;">Agregado por: ${item.agregadoPor || 'desconocido'}</small></div>
+                <div>$${(item.precio * item.cantidad).toFixed(2)} <button onclick="eliminarItemConsumo(${idx})" style="background:#8B0000; border:none; padding:5px 12px; border-radius:15px;">🗑️</button></div>
+            </div>`;
+        }).join("");
+        let ivaTotal = total * (ivaPorcentaje/100);
+        document.getElementById("consumoTotal").innerHTML = `💰 SUBTOTAL: $${total.toFixed(2)}<br>🧾 IVA ${ivaPorcentaje}%: $${ivaTotal.toFixed(2)}<br>✨ TOTAL: $${(total + ivaTotal).toFixed(2)}`;
+    }
+    
+    async function eliminarItemConsumo(idx) {
+        consumoActual.splice(idx, 1);
+        await guardarConsumoMesa(mesaSeleccionada, consumoActual);
+        renderConsumo();
+        renderMesas();
+    }
+    
+    function renderCategoriasMesero() {
+        let cont = document.getElementById("categoriasMesero");
+        if(!cont) return;
+        cont.innerHTML = `<div class="btn-secondary" onclick="filtrarCatMesero(null)">Todos</div>` + categorias.map(c => `<div class="btn-secondary" onclick="filtrarCatMesero('${c}')">${c}</div>`).join("");
+    }
+    
+    let catFiltroMesero = null;
+    function filtrarCatMesero(cat) { catFiltroMesero = cat; renderProductosMesero(); }
+    function filtrarProductosMesero() { renderProductosMesero(); }
+    
+    function renderProductosMesero() {
+        let cont = document.getElementById("productosMesero");
+        if(!cont) return;
+        let busqueda = document.getElementById("buscadorProd")?.value.toLowerCase() || "";
+        let filtrados = productos.filter(p => (catFiltroMesero === null || p.categoria === catFiltroMesero) && (busqueda === "" || p.nombre.toLowerCase().includes(busqueda)) && p.stock > 0);
+        cont.innerHTML = filtrados.map(p => `<div class="producto-card" onclick="agregarAlCarrito(${p.id})"><div style="font-size:2rem;">🍣</div><div><strong>${p.nombre}</strong></div><div style="color:#FFD700;">$${p.precio}</div><div style="font-size:0.7rem;">📦 Stock: ${p.stock}</div></div>`).join("");
+    }
+    
+    function agregarAlCarrito(id) {
+        let prod = productos.find(p => p.id === id);
+        if(!prod || prod.stock <= 0) { mostrarToast("❌ Sin stock"); return; }
+        let nota = prompt("📝 Nota para cocina:", "") || "";
+        let existente = carrito.find(i => i.id === id && i.nota === nota);
+        if(existente && existente.cantidad + 1 <= prod.stock) existente.cantidad++;
+        else if(!existente) carrito.push({ ...prod, cantidad: 1, nota: nota, agregadoPor: meseroActual?.nombre });
+        else mostrarToast("⚠️ Stock insuficiente");
+        renderCarrito();
+    }
+    
+    function renderCarrito() {
+        let cont = document.getElementById("carritoLista");
+        if(!cont) return;
+        let total = 0;
+        if(carrito.length === 0) cont.innerHTML = '<div style="padding:20px; text-align:center; color:#888;">🛒 Vacío</div>';
+        else cont.innerHTML = carrito.map((item, idx) => {
+            total += item.precio * item.cantidad;
+            return `<div class="carrito-item">
+                <div><strong>${item.cantidad}x</strong> ${item.nombre} ${item.nota ? `📝 ${item.nota}` : ''}</div>
+                <div class="cantidad-control">
+                    <button onclick="cambiarCantidadCarrito(${idx},-1)">-</button>
+                    <span>${item.cantidad}</span>
+                    <button onclick="cambiarCantidadCarrito(${idx},1)">+</button>
+                    <button onclick="eliminarItemCarrito(${idx})" style="background:#8B0000;">🗑️</button>
+                </div>
+                <div>$${(item.precio * item.cantidad).toFixed(2)}</div>
+            </div>`;
+        }).join("");
+        document.getElementById("totalPedido").innerHTML = `$${total.toFixed(2)}`;
+    }
+    
+    function cambiarCantidadCarrito(idx, delta) {
+        let item = carrito[idx];
+        let nueva = item.cantidad + delta;
+        if(nueva < 1) { carrito.splice(idx,1); renderCarrito(); return; }
+        let prod = productos.find(p => p.id === item.id);
+        if(nueva > prod.stock) { mostrarToast("⚠️ Stock insuficiente"); return; }
+        item.cantidad = nueva;
+        renderCarrito();
+    }
+    function eliminarItemCarrito(idx) { carrito.splice(idx,1); renderCarrito(); }
+    
+    function generarTicketCocina(pedido) {
+        let ticket = "=".repeat(32) + "\n        🍣 COCINA 🍣\n" + "=".repeat(32) + "\n";
+        ticket += `MESA: ${pedido.mesaNombre}\nHORA: ${pedido.hora}\nMESERO: ${pedido.mesero}\n` + "-".repeat(32) + "\n";
+        pedido.items.forEach(i => { ticket += `${i.cantidad}x    ${i.nombre} ${i.nota ? `📝 ${i.nota}` : ''}\n`; });
+        ticket += "-".repeat(32) + "\n     👨‍🍳 ¡A COCINAR!\n" + "=".repeat(32) + "\n\n";
+        return ticket;
+    }
+    
+    function generarTicketCliente(venta, mesaNombre, metodo) {
+        let ticket = "=".repeat(32) + `\n        AppInc POS\n` + "=".repeat(32) + `\nMESA: ${mesaNombre}\nFECHA: ${new Date().toLocaleString()}\nMESERO: ${venta.mesero}\n` + "-".repeat(32) + "\n";
+        venta.items.forEach(i => { ticket += `${i.cantidad}x    ${i.nombre}   $${(i.precio * i.cantidad).toFixed(2)}\n`; });
+        ticket += "-".repeat(32) + `\nSUBTOTAL: $${venta.subtotal.toFixed(2)}\nIVA ${ivaPorcentaje}%: $${venta.iva.toFixed(2)}\nTOTAL: $${venta.total.toFixed(2)}\nPAGO: ${metodo}\n` + "=".repeat(32) + "\n¡GRACIAS!\n\n";
+        return ticket;
+    }
+    
+    async function enviarPedido() {
+        if(!mesaSeleccionada) { mostrarToast("❌ Selecciona una mesa"); return; }
+        if(carrito.length === 0) { mostrarToast("❌ Agrega productos"); return; }
+        if(!meseroActual) { mostrarToast("❌ No hay mesero logueado"); return; }
+        
+        for(let item of carrito) {
+            let prod = productos.find(p => p.id === item.id);
+            if(!prod || prod.stock < item.cantidad) {
+                mostrarToast(`❌ Stock insuficiente para ${item.nombre}`);
+                return;
+            }
+        }
+        
+        for(let item of carrito) {
+            let prod = productos.find(p => p.id === item.id);
+            if(prod) prod.stock -= item.cantidad;
+        }
+        
+        let nuevoPedido = {
+            id: Date.now(),
+            mesaId: mesaSeleccionada,
+            mesaNombre: mesas.find(m => m.id === mesaSeleccionada)?.nombre || "Mesa",
+            items: carrito.map(i => ({ id: i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, nota: i.nota || "" })),
+            mesero: meseroActual.nombre,
+            hora: new Date().toLocaleTimeString(),
+            estado: "pendiente",
+            timestamp: Date.now()
+        };
+        
+        pedidosPendientes.push(nuevoPedido);
+        
+        // Guardar en Firebase para sincronizar con todos los dispositivos
+        await db.ref(`pedidos_pendientes/${nuevoPedido.id}`).set(nuevoPedido);
+        
+        for(let item of carrito) {
+            let existente = consumoActual.find(c => c.id === item.id && c.nota === item.nota);
+            if(existente) {
+                existente.cantidad += item.cantidad;
+            } else {
+                consumoActual.push({ 
+                    id: item.id, nombre: item.nombre, precio: item.precio, 
+                    costo: item.costo, cantidad: item.cantidad, nota: item.nota || "",
+                    agregadoPor: meseroActual.nombre,
+                    atendidoPor: meseroActual.nombre
+                });
+            }
+        }
+        
+        await guardarConsumoMesa(mesaSeleccionada, consumoActual);
+        guardarTodoLocal();
+        
+        let ticket = generarTicketCocina(nuevoPedido);
+        await imprimirCocina(ticket);
+        
+        renderConsumo();
+        renderProductosMesero();
+        renderPedidosCocina();
+        renderMesas();
+        
+        carrito = [];
+        renderCarrito();
+        
+        mostrarToast(`✅ Pedido enviado a cocina - Mesa ${nuevoPedido.mesaNombre} por ${meseroActual.nombre}`);
+    }
+    
+    function renderPedidosCocina() {
+        let cont = document.getElementById("pedidosCocina");
+        if(!cont) return;
+        if(pedidosPendientes.length === 0) cont.innerHTML = '<div style="padding:40px; text-align:center; color:#888;">✅ No hay pedidos pendientes</div>';
+        else cont.innerHTML = pedidosPendientes.map(p => `
+            <div class="admin-card pedido-pendiente">
+                <div style="display:flex; justify-content:space-between; flex-wrap:wrap;">
+                    <div><strong style="color:#FFD700;">🍽️ ${p.mesaNombre}</strong> | ${p.hora} | 👨‍🍳 ${p.mesero}</div>
+                    <button onclick="completarPedido(${p.id})" style="background:#27ae60; border:none; padding:5px 20px; border-radius:30px; cursor:pointer;">✅ Listo</button>
+                </div>
+                <div style="margin-top:10px;">${p.items.map(i => `• ${i.cantidad}x ${i.nombre} ${i.nota ? `📝 ${i.nota}` : ''}`).join('<br>')}</div>
+            </div>
+        `).join("");
+    }
+    
+    async function completarPedido(id) {
+        pedidosPendientes = pedidosPendientes.filter(p => p.id !== id);
+        await db.ref(`pedidos_pendientes/${id}`).remove();
+        guardarTodoLocal();
+        renderPedidosCocina();
+        mostrarToast("✅ Pedido completado");
+    }
+    
+    function cobrarMesa() {
+        if(!mesaSeleccionada || consumoActual.length === 0) { mostrarToast("❌ Mesa sin consumo"); return; }
+        let subtotal = consumoActual.reduce((s,i) => s + i.precio * i.cantidad, 0);
+        let total = subtotal * (1 + ivaPorcentaje/100);
+        document.getElementById("modalTotal").innerHTML = `💰 TOTAL: $${total.toFixed(2)}`;
+        document.getElementById("modalPago").style.display = "flex";
+    }
+    
+    function pagarEfectivo() { cerrarModalPago(); finalizarPago("Efectivo"); }
+    
+    function pagarQR() {
+        cerrarModalPago();
+        let total = consumoActual.reduce((s,i) => s + i.precio * i.cantidad, 0) * (1 + ivaPorcentaje/100);
+        document.getElementById("qrContainer").innerHTML = "";
+        new QRCode(document.getElementById("qrContainer"), { text: `Pago $${total.toFixed(2)}`, width: 180, height: 180 });
+        document.getElementById("modalQR").style.display = "flex";
+        setTimeout(() => { if(confirm("¿Confirmar pago con QR?")) { document.getElementById("modalQR").style.display = "none"; finalizarPago("QR"); } }, 30000);
+    }
+    
+    function cerrarModalPago() { document.getElementById("modalPago").style.display = "none"; }
+    function cerrarModalQR() { document.getElementById("modalQR").style.display = "none"; }
+    
+    async function finalizarPago(metodo) {
+        let mesaNombre = mesas.find(m => m.id === mesaSeleccionada)?.nombre;
+        let subtotal = consumoActual.reduce((s,i) => s + i.precio * i.cantidad, 0);
+        let iva = subtotal * (ivaPorcentaje/100);
+        let total = subtotal + iva;
+        let ganancia = consumoActual.reduce((s,i) => s + (i.precio - (i.costo || 0)) * i.cantidad, 0);
+        
+        let venta = {
+            id: Date.now(), 
+            fecha: new Date().toISOString(), 
+            mesa: mesaNombre,
+            items: [...consumoActual], 
+            subtotal, iva, total, ganancia, 
+            metodo, 
+            mesero: meseroActual?.nombre,
+            atendidaPor: meseroActual?.nombre
+        };
+        
+        let ticket = generarTicketCliente(venta, mesaNombre, metodo);
+        await imprimirCaja(ticket);
+        
+        ventas.push(venta);
+        await db.ref(`ventas/${venta.id}`).set(venta);
+        
+        await db.ref(`consumos/${mesaSeleccionada}`).remove();
+        localStorage.removeItem(`consumo_mesa_${mesaSeleccionada}`);
+        guardarTodoLocal();
+        
+        consumoActual = [];
+        mesaSeleccionada = null;
+        renderMesas();
+        renderConsumo();
+        renderVentas();
+        document.getElementById("panelPedido").style.display = "none";
+        actualizarDashboard();
+        mostrarToast(`✅ Pago $${total.toFixed(2)} completado por ${meseroActual?.nombre}`);
+    }
+    
+    function renderVentas() {
+        let cont = document.getElementById("ventasLista");
+        if(!cont) return;
+        if(ventas.length === 0) cont.innerHTML = '<div style="padding:40px; text-align:center;">💰 No hay ventas</div>';
+        else cont.innerHTML = ventas.slice().reverse().map(v => `<div class="admin-card"><div style="display:flex; justify-content:space-between;"><div>📅 ${new Date(v.fecha).toLocaleString()}</div><div>🍽️ ${v.mesa}</div><div style="color:#FFD700;">$${v.total.toFixed(2)}</div></div><div style="font-size:0.8rem;">${v.items.map(i => `${i.cantidad}x ${i.nombre}`).join(', ')}</div><div style="font-size:0.7rem;">💳 ${v.metodo} | 👨‍🍳 ${v.mesero}</div></div>`).join("");
+    }
+    
+    function abrirAdmin() { 
+        let pass = prompt("🔐 Contraseña de ADMIN:"); 
+        if(pass === "1234") { 
+            document.getElementById("adminPanel").style.display = "block"; 
+            renderListaMesasAdmin(); 
+            renderListaMeserosAdmin(); 
+            renderListaCategoriasAdmin(); 
+            renderListaProductosAdmin(); 
+            actualizarDashboard(); 
+        } else if(pass) mostrarToast("❌ Contraseña incorrecta"); 
+    }
+    
+    function cerrarAdmin() { document.getElementById("adminPanel").style.display = "none"; }
+    
+    function actualizarDashboard() { 
+        let totalVentas = ventas.reduce((s,v) => s + v.total, 0); 
+        document.getElementById("statsGrid").innerHTML = `
+            <div class="stat-card"><div class="stat-number">${productos.length}</div><div>Productos</div></div>
+            <div class="stat-card"><div class="stat-number">${productos.filter(p=>p.stock<5).length}</div><div>Stock bajo</div></div>
+            <div class="stat-card"><div class="stat-number">${mesas.length}</div><div>Mesas</div></div>
+            <div class="stat-card"><div class="stat-number">$${totalVentas.toFixed(2)}</div><div>Total ventas</div></div>
+            <div class="stat-card"><div class="stat-number">${Object.keys(usuariosActivos).length}</div><div>Meseros activos</div></div>
+        `; 
+    }
+    
+    function renderListaMesasAdmin() { 
+        let cont = document.getElementById("listaMesas"); 
+        cont.innerHTML = mesas.map(m => `<div style="display:flex; justify-content:space-between;"><span>🪑 ${m.nombre}</span><button onclick="eliminarMesa(${m.id})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); 
+    }
+    
+    function agregarMesa() { 
+        let nom = document.getElementById("nuevaMesa").value.trim(); 
+        if(nom) { 
+            let newId = mesas.length ? Math.max(...mesas.map(m=>m.id)) + 1 : 1; 
+            mesas.push({ id: newId, nombre: nom }); 
+            guardarTodoLocal(); 
+            renderListaMesasAdmin(); 
+            renderMesas(); 
+            document.getElementById("nuevaMesa").value = ""; 
+            mostrarToast("✅ Mesa agregada"); 
+        } 
+    }
+    
+    function eliminarMesa(id) { 
+        mesas = mesas.filter(m => m.id !== id); 
+        guardarTodoLocal(); 
+        renderListaMesasAdmin(); 
+        renderMesas(); 
+        if(mesaSeleccionada === id) { 
+            mesaSeleccionada = null; 
+            document.getElementById("panelPedido").style.display = "none"; 
+        } 
+    }
+    
+    function renderListaMeserosAdmin() { 
+        let cont = document.getElementById("listaMeserosAdmin"); 
+        cont.innerHTML = meseros.map((m, i) => `<div style="display:flex; justify-content:space-between;"><span>👨‍🍳 ${m.nombre} (PIN: ${m.pin})</span><button onclick="eliminarMeseroAdmin(${i})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); 
+    }
+    
+    function agregarMeseroAdmin() { 
+        let nom = document.getElementById("nuevoMesero").value.trim(); 
+        let pin = document.getElementById("nuevoPin").value; 
+        if(!nom || !pin || pin.length !== 4) { mostrarToast("❌ Nombre y PIN de 4 dígitos"); return; } 
+        if(meseros.find(m => m.nombre === nom)) { mostrarToast("❌ Ya existe"); return; } 
+        meseros.push({ nombre: nom, pin }); 
+        guardarTodoLocal(); 
+        renderListaMeserosAdmin(); 
+        document.getElementById("nuevoMesero").value = ""; 
+        document.getElementById("nuevoPin").value = ""; 
+        mostrarToast("✅ Mesero agregado"); 
+    }
+    
+    function eliminarMeseroAdmin(i) { 
+        if(meseros[i]?.nombre === meseroActual?.nombre) { 
+            meseroActual = null; 
+            document.getElementById("usuarioActual").innerHTML = ""; 
+        } 
+        meseros.splice(i,1); 
+        guardarTodoLocal(); 
+        renderListaMeserosAdmin(); 
+    }
+    
+    function renderListaCategoriasAdmin() { 
+        let cont = document.getElementById("listaCategorias"); 
+        cont.innerHTML = categorias.map((c, i) => `<div style="display:flex; justify-content:space-between;"><span>📁 ${c}</span><button onclick="eliminarCategoriaAdmin(${i})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); 
+        let sel = document.getElementById("catProducto"); 
+        sel.innerHTML = categorias.map(c => `<option value="${c}">${c}</option>`).join(""); 
+    }
+    
+    function agregarCategoriaAdmin() { 
+        let cat = document.getElementById("nuevaCat").value.trim(); 
+        if(!cat || categorias.includes(cat)) { mostrarToast("❌ Categoría inválida"); return; } 
+        categorias.push(cat); 
+        guardarTodoLocal(); 
+        renderListaCategoriasAdmin(); 
+        renderCategoriasMesero(); 
+        document.getElementById("nuevaCat").value = ""; 
+        mostrarToast("✅ Categoría agregada"); 
+    }
+    
+    function eliminarCategoriaAdmin(i) { 
+        categorias.splice(i,1); 
+        guardarTodoLocal(); 
+        renderListaCategoriasAdmin(); 
+        renderCategoriasMesero(); 
+    }
+    
+    function agregarProductoAdmin() { 
+        let cat = document.getElementById("catProducto").value; 
+        let nom = document.getElementById("nomProducto").value.trim(); 
+        let precio = parseFloat(document.getElementById("precioProducto").value); 
+        let costo = parseFloat(document.getElementById("costoProducto").value); 
+        let stock = parseInt(document.getElementById("stockProducto").value); 
+        if(!cat || !nom || isNaN(precio) || isNaN(costo) || isNaN(stock)) { mostrarToast("❌ Complete campos"); return; } 
+        let newId = productos.length ? Math.max(...productos.map(p=>p.id)) + 1 : 1; 
+        productos.push({ id: newId, categoria: cat, nombre: nom, precio, costo, stock, descripcion: document.getElementById("descProducto").value, imagen: null }); 
+        guardarTodoLocal(); 
+        renderListaProductosAdmin(); 
+        renderProductosMesero(); 
+        document.getElementById("nomProducto").value = ""; 
+        document.getElementById("precioProducto").value = ""; 
+        document.getElementById("costoProducto").value = ""; 
+        document.getElementById("stockProducto").value = ""; 
+        document.getElementById("descProducto").value = ""; 
+        mostrarToast(`✓ Producto "${nom}" agregado`); 
+    }
+    
+    function renderListaProductosAdmin() { 
+        let cont = document.getElementById("listaProductos"); 
+        cont.innerHTML = productos.map(p => `<div style="display:flex; justify-content:space-between; padding:10px; background:#0a0a0a; border-radius:16px; margin-bottom:5px;"><div><strong>${p.nombre}</strong><br><small>$${p.precio} | Stock: ${p.stock}</small></div><button onclick="eliminarProductoAdmin(${p.id})" style="background:#8B0000; border:none; padding:5px 15px; border-radius:20px;">Eliminar</button></div>`).join(""); 
+    }
+    
+    function eliminarProductoAdmin(id) { 
+        productos = productos.filter(p => p.id !== id); 
+        guardarTodoLocal(); 
+        renderListaProductosAdmin(); 
+        renderProductosMesero(); 
+    }
+    
+    function guardarConfiguracion() { 
+        let nombre = document.getElementById("editNombreNegocio").value; 
+        if(nombre) localStorage.setItem("config_nombre", nombre); 
+        ivaPorcentaje = parseInt(document.getElementById("configIva").value); 
+        localStorage.setItem("config_iva", ivaPorcentaje); 
+        document.getElementById("nombreNegocio").innerText = nombre || "AppInc POS"; 
+        mostrarToast("✓ Configuración guardada"); 
+        guardarTodoLocal(); 
+    }
+    
+    function cargarConfiguracion() { 
+        let nombre = localStorage.getItem("config_nombre") || "AppInc POS"; 
+        let iva = localStorage.getItem("config_iva"); 
+        document.getElementById("nombreNegocio").innerText = nombre; 
+        document.getElementById("editNombreNegocio").value = nombre; 
+        if(iva) document.getElementById("configIva").value = iva; 
+    }
+    
+    function cambiarTab(tab) { 
+        document.getElementById("tabMesas").style.display = tab === "mesas" ? "block" : "none"; 
+        document.getElementById("tabCocina").style.display = tab === "cocina" ? "block" : "none"; 
+        document.getElementById("tabVentas").style.display = tab === "ventas" ? "block" : "none"; 
+        document.querySelectorAll(".tab-btn").forEach((btn,i) => btn.classList.toggle("active", (tab==="mesas"&&i===0)||(tab==="cocina"&&i===1)||(tab==="ventas"&&i===2))); 
+        if(tab === "cocina") renderPedidosCocina(); 
+        if(tab === "ventas") renderVentas(); 
+    }
+    
+    // ==================== INICIALIZAR ====================
+    cargarDatosLocales();
+    escucharCambiosTiempoReal();
+    escucharConsumosMesas();
+    monitorearConexion();
+    
+    setTimeout(() => { 
+        document.getElementById("loginModal").style.display = "flex"; 
+    }, 500);
+    
+    setInterval(() => { 
+        renderPedidosCocina(); 
+    }, 3000);
+</script>
+</body>
+</html>
