@@ -63,6 +63,7 @@
         .install-banner { position: fixed; bottom: 70px; left: 20px; right: 20px; background: #1a1a1a; border: 1px solid #FFD700; border-radius: 20px; padding: 15px; display: none; align-items: center; justify-content: space-between; z-index: 2000; backdrop-filter: blur(10px); }
         .install-banner button { background: #FFD700; border: none; padding: 8px 20px; border-radius: 30px; color: #1a0000; font-weight: bold; cursor: pointer; }
         .img-preview { width: 80px; height: 80px; border-radius: 15px; margin-top: 10px; object-fit: cover; }
+        .btn-reconectar { background: #555; border: none; padding: 2px 8px; border-radius: 15px; font-size: 10px; color: white; cursor: pointer; margin-top: 3px; }
         @media (max-width: 600px) { .productos-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); } }
         @media (display-mode: standalone) { body { padding-bottom: env(safe-area-inset-bottom); } .header { padding-top: env(safe-area-inset-top); } }
     </style>
@@ -242,50 +243,99 @@
         return str.replace(/[&<>]/g, m=> m==='&'?'&amp;': m==='<'?'&lt;':'&gt;'); 
     }
     
-    // ==================== IMPRESIÓN RÁPIDA CON COLA ====================
+    // ==================== DIAGNÓSTICO BLUETOOTH ====================
+    function diagnosticarBluetooth() {
+        console.log("=== DIAGNÓSTICO BLUETOOTH ===");
+        console.log("1. Navegador:", navigator.userAgent);
+        console.log("2. Bluetooth disponible:", !!navigator.bluetooth);
+        console.log("3. HTTPS:", location.protocol === "https:");
+        console.log("4. Chrome:", navigator.userAgent.includes("Chrome"));
+        
+        if (!navigator.bluetooth) {
+            mostrarToast("❌ Web Bluetooth no soportado. Usa Chrome en Android");
+            return false;
+        }
+        if (location.protocol !== "https:" && location.hostname !== "localhost") {
+            mostrarToast("⚠️ Se requiere HTTPS para Bluetooth");
+            return false;
+        }
+        mostrarToast("✅ Bluetooth disponible - Busca impresora encendida");
+        return true;
+    }
     
+    async function escanearDispositivos() {
+        if (!navigator.bluetooth) return null;
+        try {
+            mostrarToast("🔍 Escaneando dispositivos Bluetooth...");
+            const device = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true,
+                optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+            });
+            mostrarToast(`📱 Encontrado: ${device.name || "Desconocido"}`);
+            return device;
+        } catch(e) {
+            console.log("Escaneo cancelado o error:", e);
+            return null;
+        }
+    }
+    
+    // ==================== CONEXIÓN IMPRESORAS MEJORADA ====================
     async function conectarCocina() {
         try {
-            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
-            mostrarToast("🔍 Buscando impresora para COCINA...");
+            if (!diagnosticarBluetooth()) return;
             
-            const device = await Promise.race([
-                navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
-                }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout 10s")), 10000))
-            ]);
+            mostrarToast("🔍 Buscando impresora térmica para COCINA...");
+            mostrarToast("💡 Asegúrate que la impresora esté ENCENDIDA");
+            
+            const device = await escanearDispositivos();
+            if (!device) {
+                mostrarToast("❌ No se seleccionó ninguna impresora");
+                return;
+            }
+            
+            mostrarToast(`📱 Conectando a ${device.name || "impresora"}...`);
             
             const server = await device.gatt.connect();
+            mostrarToast("✅ Conectado, buscando servicios...");
+            
             const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            mostrarToast("✅ Servicio encontrado...");
+            
             impresoraCocina = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
             
             if (impresoraCocina) {
                 document.getElementById("statusCocina").innerHTML = "🟢 Conectada";
                 document.getElementById("statusCocina").className = "cocina-on";
-                mostrarToast(`✅ Impresora COCINA conectada`);
-                await imprimirPrueba(impresoraCocina, "COCINA");
+                mostrarToast(`✅ Impresora COCINA conectada: ${device.name}`);
+                
+                const prueba = `=== PRUEBA COCINA ===\n${new Date().toLocaleString()}\n\n`;
+                await impresoraCocina.writeValue(new TextEncoder().encode(prueba));
+                mostrarToast("✅ Prueba de impresión enviada");
+                
                 procesarColaCocina();
             }
         } catch (error) { 
-            mostrarToast("❌ Error: " + error.message);
+            console.error("Error detallado:", error);
+            mostrarToast(`❌ Error: ${error.message}`);
             document.getElementById("statusCocina").innerHTML = "🔴 Error";
+            document.getElementById("statusCocina").className = "off";
         }
     }
     
     async function conectarCaja() {
         try {
-            if (!navigator.bluetooth) { mostrarToast("❌ Usa Chrome en Android"); return; }
-            mostrarToast("🔍 Buscando impresora para CAJA...");
+            if (!diagnosticarBluetooth()) return;
             
-            const device = await Promise.race([
-                navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
-                }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout 10s")), 10000))
-            ]);
+            mostrarToast("🔍 Buscando impresora térmica para CAJA...");
+            mostrarToast("💡 Asegúrate que la impresora esté ENCENDIDA");
+            
+            const device = await escanearDispositivos();
+            if (!device) {
+                mostrarToast("❌ No se seleccionó ninguna impresora");
+                return;
+            }
+            
+            mostrarToast(`📱 Conectando a ${device.name || "impresora"}...`);
             
             const server = await device.gatt.connect();
             const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
@@ -294,21 +344,20 @@
             if (impresoraCaja) {
                 document.getElementById("statusCaja").innerHTML = "🟢 Conectada";
                 document.getElementById("statusCaja").className = "caja-on";
-                mostrarToast(`✅ Impresora CAJA conectada`);
-                await imprimirPrueba(impresoraCaja, "CAJA");
+                mostrarToast(`✅ Impresora CAJA conectada: ${device.name}`);
+                
+                const prueba = `=== PRUEBA CAJA ===\n${new Date().toLocaleString()}\n\n`;
+                await impresoraCaja.writeValue(new TextEncoder().encode(prueba));
+                mostrarToast("✅ Prueba de impresión enviada");
+                
                 procesarColaCaja();
             }
         } catch (error) { 
-            mostrarToast("❌ Error: " + error.message);
+            console.error("Error detallado:", error);
+            mostrarToast(`❌ Error: ${error.message}`);
             document.getElementById("statusCaja").innerHTML = "🔴 Error";
+            document.getElementById("statusCaja").className = "off";
         }
-    }
-    
-    async function imprimirPrueba(impresora, nombre) {
-        try {
-            const prueba = `=== PRUEBA ${nombre} ===\n${new Date().toLocaleString()}\n\n`;
-            await impresora.writeValue(new TextEncoder().encode(prueba));
-        } catch(e) { console.log("Prueba falló:", e); }
     }
     
     async function enviarImpresion(impresora, texto, tipo) {
@@ -324,7 +373,6 @@
             const encoder = new TextEncoder();
             const data = encoder.encode(textoOptimizado);
             
-            // Enviar en chunks para mayor velocidad
             const chunkSize = 128;
             for (let i = 0; i < data.length; i += chunkSize) {
                 const chunk = data.slice(i, i + chunkSize);
@@ -336,7 +384,7 @@
             console.error("Error impresión:", error);
             if (tipo === 'cocina') colaImpresionCocina.push(texto);
             else colaImpresionCaja.push(texto);
-            mostrarToast(`❌ Error - pedido en cola (${error.message})`);
+            mostrarToast(`❌ Error - pedido en cola`);
             return false;
         }
     }
@@ -388,6 +436,31 @@
             await imprimirCaja(siguiente);
         }
     }
+    
+    // Botones de reconexión
+    function agregarBotonesReconexion() {
+        const statusDiv = document.getElementById("bluetoothStatus");
+        if (statusDiv && !document.getElementById("btnReconectarCocina")) {
+            const btnDiv = document.createElement("div");
+            btnDiv.id = "botonesReconexion";
+            btnDiv.style.marginTop = "5px";
+            btnDiv.innerHTML = `
+                <button class="btn-reconectar" onclick="reconectarCocina()">🔄 Reconectar Cocina</button>
+                <button class="btn-reconectar" onclick="reconectarCaja()" style="margin-left:5px;">🔄 Reconectar Caja</button>
+            `;
+            statusDiv.appendChild(btnDiv);
+        }
+    }
+    
+    window.reconectarCocina = async function() {
+        mostrarToast("🔄 Intentando reconectar impresora de COCINA...");
+        await conectarCocina();
+    };
+    
+    window.reconectarCaja = async function() {
+        mostrarToast("🔄 Intentando reconectar impresora de CAJA...");
+        await conectarCaja();
+    };
     
     // ==================== SINCRONIZACIÓN ====================
     function iniciarSincronizacion() {
@@ -477,6 +550,7 @@
         cargarConfiguracion();
         renderMesas(); renderCategoriasMesero(); renderProductosMesero(); renderPedidosCocina(); renderVentas(); actualizarDashboard();
         mostrarToast("✅ Datos sincronizados");
+        agregarBotonesReconexion();
     }
     
     // ==================== FUNCIONES PRINCIPALES ====================
